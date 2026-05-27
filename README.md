@@ -248,6 +248,49 @@ graph LR
 
 <br>
 
+## 🖥️ Output Examples
+
+Here is a glimpse of what the **Live Stream Mode** report looks like in the terminal:
+
+### Vibe-Code Alert
+```text
+╭───────────────────────────────────────────────────────────── 🤖 ─────────────────────────────────────────────────────────────╮
+│ 🚨 VIBE-CODE ALERT: Lovable (GPT Engineer) Detected!                                                                       │
+│                                                                                                                            │
+│ Evidence: Found lovable specific classes/IDs in HTML                                                                       │
+│                                                                                                                            │
+│ Exploit: Apps built with Lovable often connect to Supabase. Check the JS bundles for exposed SUPABASE_KEY                  │
+│ and SUPABASE_URL. If RLS (Row Level Security) is not configured, the entire database can be dumped.                        │
+│                                                                                                                            │
+│ Patch: Ensure Row Level Security (RLS) is strictly enforced on all Supabase tables.                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+### API & GraphQL Discovery
+```text
+╭─────────────────────────────────────────────────────── 🔌 ────────────────────────────────────────────────────────────────╮
+│ 🔴 CRITICAL GraphQL Introspection                                                                                           │
+│                                                                                                                             │
+│ URL: https://example.com/api/graphql                                                                                        │
+│                                                                                                                             │
+│ Description / Exploit:                                                                                                      │
+│ GraphQL Introspection is ENABLED! The entire database schema can be dumped.                                                 │
+│ Exploit: curl -X POST https://example.com/api/graphql -H 'Content-Type: application/json' -d '{"query":"{__schema{types{n…  │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+### Final Score
+```text
+╭─────────────────────────────────────────────────── FINAL SCORE ────────────────────────────────────────────────────────────╮
+│                                                                                                                            │
+│   [bold white on red]  SECURITY GRADE: F  [/bold white on red]                                                              │
+│                                                                                                                            │
+│ Total findings: 12                                                                                                         │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+<br>
+
 ## 📁 Project Structure
 
 ```
