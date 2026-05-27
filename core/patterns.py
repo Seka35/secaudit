@@ -69,30 +69,30 @@ SECURITY_HEADERS = {
     },
     "X-Frame-Options": {
         "expected": True,
-        "severity": "MEDIUM",
+        "severity": "INFO",
         "description": "Prevents clickjacking attacks by controlling iframe embedding.",
-        "exploit": "Without X-Frame-Options, an attacker can embed your site in an invisible iframe and trick users into clicking hidden elements (clickjacking).",
+        "exploit": "Vibe-Sec: Most modern browsers handle this via CSP. (Clickjacking is rarely fully exploitable via automated scanners).",
         "patch": "Add header: X-Frame-Options: DENY (or SAMEORIGIN if iframes are needed)"
     },
     "X-XSS-Protection": {
         "expected": True,
-        "severity": "LOW",
+        "severity": "INFO",
         "description": "Legacy XSS filter (deprecated but still useful for older browsers).",
-        "exploit": "Older browsers without XSS auditor enabled may be vulnerable to reflected XSS attacks.",
+        "exploit": "Vibe-Sec: Deprecated in modern browsers. CSP is the modern standard.",
         "patch": "Add header: X-XSS-Protection: 1; mode=block"
     },
     "Referrer-Policy": {
         "expected": True,
-        "severity": "LOW",
+        "severity": "INFO",
         "description": "Controls how much referrer information is sent with requests.",
-        "exploit": "Without this, sensitive URL parameters (tokens, session IDs) may leak to third-party sites via the Referer header.",
+        "exploit": "Vibe-Sec: Good practice, but not directly exploitable unless sensitive tokens are in URLs (which shouldn't happen).",
         "patch": "Add header: Referrer-Policy: strict-origin-when-cross-origin"
     },
     "Permissions-Policy": {
         "expected": True,
-        "severity": "LOW",
+        "severity": "INFO",
         "description": "Controls which browser features the site can use.",
-        "exploit": "Without this, embedded third-party content could access sensitive browser APIs (camera, microphone, geolocation).",
+        "exploit": "Vibe-Sec: Modern browsers sandbox APIs anyway. Good defense-in-depth, but missing it is rarely critical.",
         "patch": "Add header: Permissions-Policy: camera=(), microphone=(), geolocation=()"
     },
 }

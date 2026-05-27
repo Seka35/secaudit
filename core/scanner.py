@@ -492,7 +492,14 @@ class SecurityScanner:
                     is_html_error = any(x in r.text.lower() for x in ["404", "not found", "page not found", "error"])
                     if not is_html_error:
                         snippet = r.text[:200].replace("\n", " ").strip()
-                        sev = "CRITICAL" if any(x in path for x in [".env", ".git", "config", "wp-config", "backup", ".ssh"]) else "HIGH" if any(x in path for x in ["package.json", "docker", "composer"]) else "MEDIUM"
+                        if any(x in path for x in [".env", ".git", "config", "wp-config", "backup", ".ssh"]):
+                            sev = "CRITICAL"
+                        elif any(x in path for x in ["package.json", "docker", "composer"]):
+                            sev = "HIGH"
+                        elif any(x in path for x in ["robots.txt", "sitemap.xml", "crossdomain.xml", "security.txt"]):
+                            sev = "INFO"
+                        else:
+                            sev = "MEDIUM"
                         return {"path": path, "status": r.status_code, "size": len(r.text), "snippet": snippet, "severity": sev}
             except:
                 pass
@@ -514,11 +521,14 @@ class SecurityScanner:
             flags = {"secure": c.secure, "httponly": "httponly" in str(c._rest).lower() or c.has_nonstandard_attr("HttpOnly"), "samesite": c.get_nonstandard_attr("SameSite") or "Not Set"}
             issues = []
             if not c.secure:
-                issues.append("Missing Secure flag — cookie sent over HTTP")
+                if self.parsed.scheme == "https":
+                    issues.append("[INFO] Missing Secure flag — (Cookie sent over HTTPS anyway, but flag is missing)")
+                else:
+                    issues.append("Missing Secure flag — cookie sent over HTTP")
             if not flags["httponly"]:
-                issues.append("Missing HttpOnly flag — accessible via JavaScript (XSS risk)")
+                issues.append("[INFO] Missing HttpOnly flag — accessible via JS (Vulnerable only if XSS exists)")
             if flags["samesite"] == "Not Set":
-                issues.append("Missing SameSite — vulnerable to CSRF")
+                issues.append("[INFO] Missing SameSite flag — (Modern browsers default to Lax)")
             cookies.append({"name": c.name, "domain": c.domain, "path": c.path, "secure": c.secure, "httponly": flags["httponly"], "samesite": flags["samesite"], "issues": issues})
         return {"cookies": cookies}
 
@@ -534,14 +544,22 @@ class SecurityScanner:
             has_password = any(i.get("type") == "password" for i in f.find_all("input"))
             issues = []
             if not has_csrf:
-                issues.append("No CSRF token detected — vulnerable to Cross-Site Request Forgery")
+                if method == "GET" and (not action or action == "#"):
+                    pass # Vibe-Sec: GET forms without action are usually client-side search/filters, CSRF not applicable
+                elif method == "GET":
+                    issues.append("[INFO] No CSRF token — but form uses GET (usually safe if it doesn't change state)")
+                else:
+                    issues.append("No CSRF token detected — vulnerable to Cross-Site Request Forgery")
             if method == "GET" and has_password:
                 issues.append("Password sent via GET — credentials visible in URL and logs")
             if action.startswith("http://"):
                 issues.append("Form submits over HTTP — credentials sent in plaintext")
             if not action or action == "#":
-                issues.append("Empty/anchor form action — may indicate client-side only handling")
-            forms.append({"action": action or "(empty)", "method": method, "inputs": inputs, "has_csrf": has_csrf, "issues": issues})
+                issues.append("[INFO] Empty/anchor form action — typically client-side UI (React/Vue/Framer)")
+            
+            # Only add to report if there are non-INFO issues or we want to show INFO
+            if issues:
+                forms.append({"action": action or "(empty)", "method": method, "inputs": inputs, "has_csrf": has_csrf, "issues": issues})
         return {"forms": forms}
 
     def scan_info_leaks(self):
