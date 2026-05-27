@@ -113,20 +113,31 @@ Every finding includes:
 
 ## 🚀 Quick Start
 
+### Option 1: Global Installation (Recommended)
+Install SecAudit globally so you can run it from anywhere in your terminal just by typing `secaudit`.
+
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/security-analyse.git
-cd security-analyse
+git clone https://github.com/Seka35/secaudit.git
+cd secaudit
 
-# Set up virtual environment
+# Run the install script
+chmod +x install.sh
+./install.sh
+
+# Run from anywhere
+secaudit
+```
+
+### Option 2: Run Locally
+If you prefer not to install globally, you can run it directly:
+
+```bash
+git clone https://github.com/Seka35/secaudit.git
+cd secaudit
 python3 -m venv venv
-source venv/bin/activate    # Linux/macOS
-# venv\Scripts\activate     # Windows
-
-# Install dependencies
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Run the scanner
 python3 secaudit.py
 ```
 
