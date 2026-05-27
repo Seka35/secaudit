@@ -45,6 +45,7 @@ misconfigurations, and vulnerabilities — then tells you exactly how to exploit
 ### 🔍 Deep Source Analysis
 - Crawls **all HTML, CSS, JS** files
 - **Next.js deep crawl** — discovers `_buildManifest.js`, fetches all page chunks automatically
+- **OSINT Wayback Hunting** — Queries the Internet Archive to find historical secrets that were leaked in the past but removed from the live site
 - Scans inline scripts, external bundles, stylesheets
 - Concurrent fetching for speed
 

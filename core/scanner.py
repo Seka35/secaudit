@@ -40,6 +40,7 @@ class SecurityScanner:
             ("Detecting technology stack", self.scan_tech),
             ("Detecting vibe-coding tools", self.scan_vibe_coding),
             ("Crawling linked resources", self.crawl_resources),
+            ("Hunting historical secrets (Wayback OSINT)", self.scan_wayback),
             ("Scanning for secrets", self.scan_secrets),
             ("Checking sensitive paths", self.scan_sensitive_paths),
             ("Analyzing cookies", self.scan_cookies),
@@ -332,6 +333,51 @@ class SecurityScanner:
                         self.css_contents.append(result)
                     else:
                         self.js_contents.append(result)
+
+    def scan_wayback(self):
+        """Query Wayback Machine CDX API to find historical JS secrets."""
+        import json
+        cdx_url = f"http://web.archive.org/cdx/search/cdx?url={self.domain}/*&output=json&fl=timestamp,original&filter=mimetype:application/javascript&collapse=urlkey&limit=15"
+        try:
+            resp = self.session.get(cdx_url, timeout=30)
+            if not resp or resp.status_code != 200:
+                return {"wayback_error": f"Failed to reach CDX API: {getattr(resp, 'status_code', 'Timeout')}"}
+            
+            data = resp.json()
+            if not data or len(data) <= 1:
+                return {"wayback_files": 0}
+            
+            # Skip the first row (header row)
+            archives = data[1:]
+            
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            fetched_count = 0
+            
+            def fetch_archive(timestamp, original):
+                archive_url = f"https://web.archive.org/web/{timestamp}id_/{original}"
+                r = self.session.get(archive_url, timeout=20, allow_redirects=True)
+                if r and r.status_code == 200 and len(r.text) > 50:
+                    return {"url": f"[ARCHIVE] {original}", "content": r.text}
+                return None
+                
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                futures = {pool.submit(fetch_archive, row[0], row[1]): row for row in archives}
+                for f in as_completed(futures):
+                    result = f.result()
+                    if result:
+                        self.js_contents.append(result)
+                        fetched_count += 1
+            
+            # Rebuild all_source to include the new historical files so scan_secrets can find them
+            self.all_source = self.page_text
+            for js in self.js_contents:
+                self.all_source += "\n" + js["content"]
+            for css in self.css_contents:
+                self.all_source += "\n" + css["content"]
+                
+            return {"wayback_files_fetched": fetched_count}
+        except Exception as e:
+            return {"wayback_error": str(e)}
 
     def scan_secrets(self):
         if not self.all_source:
