@@ -47,6 +47,7 @@ class SecurityScanner:
             ("Analyzing forms", self.scan_forms),
             ("Checking for info leaks", self.scan_info_leaks),
             ("Analyzing JavaScript", self.scan_js_deep),
+            ("Probing API & GraphQL endpoints", self.scan_api_endpoints),
             ("Running Nuclei engine (Infrastructure vulnerabilities)", self.scan_nuclei),
         ]
         with Progress(SpinnerColumn(), TextColumn("[bold cyan]{task.description}"), console=self.console) as prog:
@@ -617,3 +618,69 @@ class SecurityScanner:
             pass
             
         return {"nuclei": findings}
+
+    def scan_api_endpoints(self):
+        """Actively probe for Swagger files and GraphQL endpoints to analyze API security."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        findings = []
+        base = f"{self.parsed.scheme}://{self.parsed.netloc}"
+        
+        # 1. Probe for Swagger / OpenAPI JSON schemas
+        swagger_paths = [
+            "/swagger.json", "/api/swagger.json", "/v1/swagger.json", "/v2/swagger.json",
+            "/openapi.json", "/api/openapi.json", "/v3/api-docs", "/api-docs", "/v2/api-docs"
+        ]
+        
+        def probe_swagger(path):
+            try:
+                r = requests.get(base + path, timeout=3, allow_redirects=False, headers={"User-Agent": UA})
+                if r.status_code == 200 and "application/json" in r.headers.get("Content-Type", ""):
+                    data = r.json()
+                    # Verify it's actually swagger/openapi
+                    if "swagger" in data or "openapi" in data:
+                        title = data.get("info", {}).get("title", "Unknown API")
+                        version = data.get("info", {}).get("version", "1.0")
+                        paths = data.get("paths", {})
+                        endpoints_count = len(paths)
+                        
+                        # Check for authentication
+                        has_auth = "securityDefinitions" in data or "securitySchemes" in data.get("components", {})
+                        
+                        sev = "HIGH" if not has_auth else "MEDIUM"
+                        desc = (f"Swagger/OpenAPI schema exposed.\n"
+                                f"API Title: {title} (v{version})\n"
+                                f"Endpoints Exposed: {endpoints_count}\n"
+                                f"Authentication Defined: {'Yes' if has_auth else 'NO (Unauthenticated API)'}")
+                                
+                        return {"type": "Swagger Schema", "url": base + path, "description": desc, "severity": sev}
+            except:
+                pass
+            return None
+            
+        # 2. Probe for GraphQL Introspection
+        graphql_paths = ["/graphql", "/api/graphql", "/v1/graphql", "/api/v1/graphql"]
+        introspection_query = {"query": "{ __schema { queryType { name } } }"}
+        
+        def probe_graphql(path):
+            try:
+                r = requests.post(base + path, json=introspection_query, timeout=3, allow_redirects=False, headers={"User-Agent": UA})
+                if r.status_code == 200:
+                    data = r.json()
+                    if "data" in data and "__schema" in data["data"]:
+                        desc = ("GraphQL Introspection is ENABLED! The entire database schema can be dumped.\n"
+                                f"Exploit: curl -X POST {base+path} -H 'Content-Type: application/json' -d '{{\"query\":\"{{__schema{{types{{name}}}}}}\"}}'")
+                        return {"type": "GraphQL Introspection", "url": base + path, "description": desc, "severity": "CRITICAL"}
+            except:
+                pass
+            return None
+
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            futures = [pool.submit(probe_swagger, p) for p in swagger_paths]
+            futures += [pool.submit(probe_graphql, p) for p in graphql_paths]
+            
+            for f in as_completed(futures):
+                r = f.result()
+                if r:
+                    findings.append(r)
+                    
+        return {"api_discovery": findings}

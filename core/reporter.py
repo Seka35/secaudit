@@ -38,6 +38,7 @@ class Reporter:
         self._report_forms(results.get("forms", []))
         self._report_info_leaks(results.get("info_leaks", []))
         self._report_js(results.get("js_analysis", []))
+        self._report_api_discovery(results.get("api_discovery", []))
         self._report_nuclei(results.get("nuclei", []))
         self._report_summary()
 
@@ -528,6 +529,18 @@ class Reporter:
                 "[bold red]Exploit:[/bold red] Functions like eval(), innerHTML, and document.write() can execute attacker-controlled input, leading to XSS.\n\n"
                 "[bold green]Patch:[/bold green] Replace eval() with JSON.parse(). Use textContent instead of innerHTML. Use DOM APIs instead of document.write().",
                 title="⚠ Dangerous JS Patterns", border_style="yellow"))
+
+    def _report_api_discovery(self, findings):
+        if not findings:
+            return
+        self._section("API & GRAPHQL DISCOVERY", "🔌")
+        for f in findings:
+            sev = f["severity"]
+            self.vuln_count[sev] = self.vuln_count.get(sev, 0) + 1
+            self.console.print(Panel(
+                f"[bold]URL:[/bold] {f['url']}\n\n"
+                f"[bold red]Description / Exploit:[/bold red]\n{f['description']}",
+                title=f"{self._sev(sev)} {f['type']}", border_style="yellow"))
 
     def _report_nuclei(self, findings):
         if not findings:
