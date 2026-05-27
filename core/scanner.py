@@ -30,36 +30,56 @@ class SecurityScanner:
         except:
             return None
 
-    def run_full_scan(self):
+    def run_full_scan(self, reporter=None):
         results = {}
+        # Map each scanner module to its corresponding reporter method and expected result key
         modules = [
-            ("Fetching page", self.fetch_page),
-            ("Analyzing DNS & domain", self.scan_domain),
-            ("Analyzing HTTP headers", self.scan_headers),
-            ("Analyzing SSL/TLS", self.scan_ssl),
-            ("Detecting technology stack", self.scan_tech),
-            ("Detecting vibe-coding tools", self.scan_vibe_coding),
-            ("Crawling linked resources", self.crawl_resources),
-            ("Hunting historical secrets (Wayback OSINT)", self.scan_wayback),
-            ("Scanning for secrets", self.scan_secrets),
-            ("Checking sensitive paths", self.scan_sensitive_paths),
-            ("Analyzing cookies", self.scan_cookies),
-            ("Analyzing forms", self.scan_forms),
-            ("Checking for info leaks", self.scan_info_leaks),
-            ("Analyzing JavaScript", self.scan_js_deep),
-            ("Probing API & GraphQL endpoints", self.scan_api_endpoints),
-            ("Running Nuclei engine (Infrastructure vulnerabilities)", self.scan_nuclei),
+            ("Fetching page", self.fetch_page, "fetch", reporter._report_fetch if reporter else None),
+            ("Analyzing DNS & domain", self.scan_domain, "domain_info", reporter._report_domain if reporter else None),
+            ("Analyzing HTTP headers", self.scan_headers, "headers", reporter._report_headers if reporter else None),
+            ("Analyzing SSL/TLS", self.scan_ssl, "ssl", reporter._report_ssl if reporter else None),
+            ("Detecting technology stack", self.scan_tech, "tech", reporter._report_tech if reporter else None),
+            ("Detecting vibe-coding tools", self.scan_vibe_coding, "vibe_coding", reporter._report_vibe_coding if reporter else None),
+            ("Crawling linked resources", self.crawl_resources, "resources", reporter._report_resources if reporter else None),
+            ("Hunting historical secrets (Wayback OSINT)", self.scan_wayback, "wayback", None), # Silently run, no dedicated report
+            ("Scanning for secrets", self.scan_secrets, "secrets", reporter._report_secrets if reporter else None),
+            ("Checking sensitive paths", self.scan_sensitive_paths, "sensitive_paths", reporter._report_sensitive_paths if reporter else None),
+            ("Analyzing cookies", self.scan_cookies, "cookies", reporter._report_cookies if reporter else None),
+            ("Analyzing forms", self.scan_forms, "forms", reporter._report_forms if reporter else None),
+            ("Checking for info leaks", self.scan_info_leaks, "info_leaks", reporter._report_info_leaks if reporter else None),
+            ("Analyzing JavaScript", self.scan_js_deep, "js_analysis", reporter._report_js if reporter else None),
+            ("Probing API & GraphQL endpoints", self.scan_api_endpoints, "api_discovery", reporter._report_api_discovery if reporter else None),
+            ("Running Nuclei engine (Infrastructure vulnerabilities)", self.scan_nuclei, "nuclei", reporter._report_nuclei if reporter else None),
         ]
-        with Progress(SpinnerColumn(), TextColumn("[bold cyan]{task.description}"), console=self.console) as prog:
-            for desc, fn in modules:
-                t = prog.add_task(desc, total=None)
+        
+        from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(bar_width=30),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=self.console,
+            transient=True # Disappears when done
+        ) as prog:
+            task_id = prog.add_task("Initializing...", total=len(modules))
+            
+            for desc, fn, result_key, rep_fn in modules:
+                prog.update(task_id, description=f"[bold cyan]{desc}")
                 try:
                     r = fn()
                     if r:
                         results.update(r)
+                        if rep_fn:
+                            # Pause the progress bar output briefly to print the streaming report cleanly
+                            if result_key == "fetch":
+                                rep_fn(r.get(result_key, {}), self.url)
+                            else:
+                                rep_fn(r.get(result_key, [] if isinstance(r.get(result_key), list) else {}))
                 except Exception as e:
                     results[desc] = {"error": str(e)}
-                prog.update(t, completed=True)
+                prog.advance(task_id)
+                
         return results
 
     def fetch_page(self):

@@ -58,15 +58,18 @@ def main():
     ))
     console.print()
 
+    # Initialize reporter and print header
+    reporter = Reporter(console)
+    console.print(Panel("[bold white]SECURITY AUDIT REPORT[/bold white]", title="[bold red]☠  SECAUDIT LIVE STREAM[/bold red]", border_style="bright_red", padding=(1, 4)))
+    
     # Initialize scanner
     scanner = SecurityScanner(url, console)
 
-    # Run all scan modules
-    results = scanner.run_full_scan()
+    # Run all scan modules in streaming mode
+    results = scanner.run_full_scan(reporter=reporter)
 
-    # Generate report
-    reporter = Reporter(console)
-    reporter.generate_report(results, url)
+    # Generate final summary
+    reporter._report_summary()
 
     console.print()
     console.print(Panel(
