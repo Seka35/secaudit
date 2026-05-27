@@ -38,6 +38,7 @@ class Reporter:
         self._report_forms(results.get("forms", []))
         self._report_info_leaks(results.get("info_leaks", []))
         self._report_js(results.get("js_analysis", []))
+        self._report_nuclei(results.get("nuclei", []))
         self._report_summary()
 
     def _report_fetch(self, data, url):
@@ -527,6 +528,23 @@ class Reporter:
                 "[bold red]Exploit:[/bold red] Functions like eval(), innerHTML, and document.write() can execute attacker-controlled input, leading to XSS.\n\n"
                 "[bold green]Patch:[/bold green] Replace eval() with JSON.parse(). Use textContent instead of innerHTML. Use DOM APIs instead of document.write().",
                 title="⚠ Dangerous JS Patterns", border_style="yellow"))
+
+    def _report_nuclei(self, findings):
+        if not findings:
+            return
+        self._section("NUCLEI ENGINE FINDINGS", "☢️")
+        for f in findings:
+            sev = f["severity"].upper()
+            if sev == "UNKNOWN": sev = "INFO"
+            
+            # Map nuclei severities to our severities if needed
+            self.vuln_count[sev] = self.vuln_count.get(sev, 0) + 1
+            
+            self.console.print(Panel(
+                f"[bold]Type:[/bold] {f['type']}\n"
+                f"[bold]Matched At:[/bold] {f['url']}\n\n"
+                f"[bold red]Description:[/bold red] {f['description'] or 'No description provided.'}",
+                title=f"{self._sev(sev)} {f['name']}", border_style="yellow"))
 
     def _report_summary(self):
         self.console.print()

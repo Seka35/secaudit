@@ -20,6 +20,31 @@ pip install -r "$INSTALL_DIR/requirements.txt" --quiet
 # Create ~/.local/bin if it doesn't exist
 mkdir -p "$BIN_DIR"
 
+# Auto-install Nuclei if not present
+if ! command -v nuclei &> /dev/null; then
+    echo "⚙️ Nuclei not found. Auto-installing Nuclei..."
+    VERSION=$(curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [ -n "$VERSION" ]; then
+        VERSION_NUM=${VERSION#v}
+        OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+        ARCH="$(uname -m)"
+        if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; fi
+        if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then ARCH="arm64"; fi
+        
+        wget -q "https://github.com/projectdiscovery/nuclei/releases/download/${VERSION}/nuclei_${VERSION_NUM}_${OS}_${ARCH}.zip" -O /tmp/nuclei.zip
+        if [ -f /tmp/nuclei.zip ]; then
+            unzip -q /tmp/nuclei.zip nuclei -d /tmp/
+            mv /tmp/nuclei "$BIN_DIR/"
+            rm /tmp/nuclei.zip
+            echo "✅ Nuclei installed successfully to $BIN_DIR/nuclei"
+        else
+            echo "⚠️ Failed to download Nuclei. Please install it manually for extended vulnerability scanning."
+        fi
+    else
+        echo "⚠️ Failed to find latest Nuclei version. Please install it manually."
+    fi
+fi
+
 # Create the wrapper script content
 WRAPPER_SCRIPT="#!/bin/bash
 # Wrapper script for SecAudit

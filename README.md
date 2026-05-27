@@ -46,6 +46,7 @@ misconfigurations, and vulnerabilities — then tells you exactly how to exploit
 - Crawls **all HTML, CSS, JS** files
 - **Next.js deep crawl** — discovers `_buildManifest.js`, fetches all page chunks automatically
 - **OSINT Wayback Hunting** — Queries the Internet Archive to find historical secrets that were leaked in the past but removed from the live site
+- **Nuclei Engine Integration** — Automatically orchestrates Nuclei (if installed) to find CVEs, exposed `.env` files, and backend misconfigurations
 - Scans inline scripts, external bundles, stylesheets
 - Concurrent fetching for speed
 
@@ -116,6 +117,7 @@ Every finding includes:
 
 ### Option 1: Global Installation (Recommended)
 Install SecAudit globally so you can run it from anywhere in your terminal just by typing `secaudit`.
+*(Note: The install script will also automatically download and install Nuclei if it's not already on your system!)*
 
 ```bash
 # Clone the repo

@@ -47,6 +47,7 @@ class SecurityScanner:
             ("Analyzing forms", self.scan_forms),
             ("Checking for info leaks", self.scan_info_leaks),
             ("Analyzing JavaScript", self.scan_js_deep),
+            ("Running Nuclei engine (Infrastructure vulnerabilities)", self.scan_nuclei),
         ]
         with Progress(SpinnerColumn(), TextColumn("[bold cyan]{task.description}"), console=self.console) as prog:
             for desc, fn in modules:
@@ -570,3 +571,49 @@ class SecurityScanner:
                 seen.add(k)
                 unique.append(f)
         return {"js_analysis": unique[:50]}
+
+    def scan_nuclei(self):
+        """Run Nuclei in the background for infrastructure CVEs, exposed panels, and misconfigurations."""
+        import subprocess
+        import json
+        
+        # Check if nuclei is installed
+        try:
+            subprocess.run(["which", "nuclei"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError:
+            return {"nuclei": []} # Not installed
+            
+        findings = []
+        # Run targeted nuclei scan
+        cmd = ["nuclei", "-u", self.url, "-tags", "cve,exposure,misconfig,vuln", "-jsonl", "-silent"]
+        try:
+            # We use timeout=180 to avoid hanging forever on slow targets
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
+            for line in result.stdout.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                    info = data.get("info", {})
+                    finding = {
+                        "name": info.get("name", "Unknown Vulnerability"),
+                        "severity": info.get("severity", "info").upper(),
+                        "description": info.get("description", ""),
+                        "url": data.get("matched-at", self.url),
+                        "type": data.get("type", "unknown")
+                    }
+                    findings.append(finding)
+                except:
+                    pass
+        except subprocess.TimeoutExpired:
+            findings.append({
+                "name": "Nuclei Scan Timeout",
+                "severity": "INFO",
+                "description": "The Nuclei scan timed out after 3 minutes.",
+                "url": self.url,
+                "type": "timeout"
+            })
+        except Exception as e:
+            pass
+            
+        return {"nuclei": findings}
