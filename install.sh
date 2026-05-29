@@ -20,28 +20,36 @@ pip install -r "$INSTALL_DIR/requirements.txt" --quiet
 # Create ~/.local/bin if it doesn't exist
 mkdir -p "$BIN_DIR"
 
-# Auto-install Nuclei if not present
-if ! command -v nuclei &> /dev/null; then
-    echo "⚙️ Nuclei not found. Auto-installing Nuclei..."
-    VERSION=$(curl -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [ -n "$VERSION" ]; then
-        VERSION_NUM=${VERSION#v}
-        OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-        ARCH="$(uname -m)"
-        if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; fi
-        if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then ARCH="arm64"; fi
-        
-        wget -q "https://github.com/projectdiscovery/nuclei/releases/download/${VERSION}/nuclei_${VERSION_NUM}_${OS}_${ARCH}.zip" -O /tmp/nuclei.zip
-        if [ -f /tmp/nuclei.zip ]; then
-            unzip -q /tmp/nuclei.zip nuclei -d /tmp/
-            mv /tmp/nuclei "$BIN_DIR/"
-            rm /tmp/nuclei.zip
-            echo "✅ Nuclei installed successfully to $BIN_DIR/nuclei"
+# Auto-pull WPScan Docker image if Docker is available
+if command -v docker &> /dev/null; then
+    if ! docker image inspect wpscanteam/wpscan &> /dev/null; then
+        echo "⚙️ Pulling WPScan Docker image..."
+        docker pull wpscanteam/wpscan 2>/dev/null && echo "✅ WPScan Docker image ready" || echo "⚠️ Failed to pull WPScan image"
+    fi
+fi
+
+# Auto-install Gitleaks if not present
+if ! command -v gitleaks &> /dev/null; then
+    echo "⚙️ Gitleaks not found. Auto-installing Gitleaks..."
+    VERSION="8.18.2"
+    OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    ARCH="$(uname -m)"
+    if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; fi
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then ARCH="arm64"; fi
+
+    wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_${OS}_${ARCH}.zip" -O /tmp/gitleaks.zip
+    if [ -f /tmp/gitleaks.zip ]; then
+        unzip -q /tmp/gitleaks.zip -d /tmp/
+        chmod +x /tmp/gitleaks
+        if command -v sudo &> /dev/null; then
+            sudo mv /tmp/gitleaks "$BIN_DIR/"
         else
-            echo "⚠️ Failed to download Nuclei. Please install it manually for extended vulnerability scanning."
+            mv /tmp/gitleaks "$BIN_DIR/"
         fi
+        rm /tmp/gitleaks.zip
+        echo "✅ Gitleaks installed successfully to $BIN_DIR/gitleaks"
     else
-        echo "⚠️ Failed to find latest Nuclei version. Please install it manually."
+        echo "⚠️ Failed to download Gitleaks. Run: sudo apt install gitleaks"
     fi
 fi
 

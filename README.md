@@ -109,6 +109,15 @@ Every finding includes:
 - **Final security grade** (A+ to F)
 
 </td>
+<td width="50%">
+
+### 🤖 AI Penetration Tester (Bonus)
+- **OpenRouter AI integration** — After the scan, AI generates detailed exploitation steps
+- Custom prompt system specialized in pentesting and red team tactics
+- Real attack commands, payloads, escalation paths
+- Works with any OpenRouter-compatible model (DeepSeek, GPT, Claude...)
+
+</td>
 </tr>
 </table>
 
@@ -300,10 +309,11 @@ security-analyse/
 ├── README.md
 └── core/
     ├── __init__.py
-    ├── banner.py            # ASCII art & UI elements
-    ├── patterns.py          # 41 secret patterns, 7 headers, 60+ paths,
+    ├── ai_analyzer.py      # OpenRouter AI penetration tester
+    ├── banner.py           # ASCII art & UI elements
+    ├── patterns.py         # 41 secret patterns, 7 headers, 60+ paths,
     │                        #   30+ tech signatures, 25 vibe-coding tools
-    ├── scanner.py           # 13 scan modules (DNS, SSL, secrets, JS, etc.)
+    ├── scanner.py          # 13 scan modules (DNS, SSL, secrets, JS, etc.)
     └── reporter.py          # Rich terminal report with exploit/patch details
 ```
 

