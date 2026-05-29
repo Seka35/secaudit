@@ -42,6 +42,8 @@ misconfigurations, and vulnerabilities — then tells you exactly how to exploit
 - Crawls **all HTML, CSS, JS** files
 - **Next.js deep crawl** — discovers `_buildManifest.js`, fetches all page chunks automatically
 - **OSINT Wayback Hunting** — Queries the Internet Archive to find historical secrets that were leaked in the past but removed from the live site
+- **WPScan Integration** — Automatically runs WPScan (Docker) when WordPress is detected to find plugin/theme vulnerabilities
+- **Gitleaks Integration** — Clones and scans public GitHub repos detected in source for committed secrets
 - **API & GraphQL Discovery** — Actively probes for hidden Swagger files and exposed GraphQL endpoints. Automatically detects unauthenticated APIs and unprotected introspection queries.
 - Scans inline scripts, external bundles, stylesheets
 - Concurrent fetching for speed
