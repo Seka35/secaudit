@@ -38,21 +38,13 @@ misconfigurations, and vulnerabilities — then tells you exactly how to exploit
 
 ## ⚡ Features
 
-<table>
-<tr>
-<td width="50%">
-
 ### 🔍 Deep Source Analysis
 - Crawls **all HTML, CSS, JS** files
 - **Next.js deep crawl** — discovers `_buildManifest.js`, fetches all page chunks automatically
 - **OSINT Wayback Hunting** — Queries the Internet Archive to find historical secrets that were leaked in the past but removed from the live site
-- **Nuclei Engine Integration** — Automatically orchestrates Nuclei (if installed) to find CVEs, exposed `.env` files, and backend misconfigurations
 - **API & GraphQL Discovery** — Actively probes for hidden Swagger files and exposed GraphQL endpoints. Automatically detects unauthenticated APIs and unprotected introspection queries.
 - Scans inline scripts, external bundles, stylesheets
 - Concurrent fetching for speed
-
-</td>
-<td width="50%">
 
 ### 🔑 Secret Scanner (41 patterns)
 - **AWS, GCP, Azure** access keys
@@ -60,12 +52,7 @@ misconfigurations, and vulnerabilities — then tells you exactly how to exploit
 - **OpenAI, Anthropic, OpenRouter** LLM keys
 - **GitHub, GitLab, Slack, Discord** tokens
 - Firebase, Supabase, Twilio, SendGrid, Mapbox...
-- Smart **false-positive filtering** (skips CSS tokens, SRI hashes, etc.)
-
-</td>
-</tr>
-<tr>
-<td width="50%">
+- Smart **false-positive filtering** (skips CSS tokens, SRI hashes, Cloudflare blocks, i18n labels, TypeScript enums...)
 
 ### 🤖 Vibe-Code Detection (25 tools)
 - **AI IDEs:** Replit, Cursor, Windsurf, Copilot, Devin
@@ -73,9 +60,6 @@ misconfigurations, and vulnerabilities — then tells you exactly how to exploit
 - **No-Code:** Bubble, Webflow, Framer, Wix, Softr, Glide, FlutterFlow
 - **Deploy:** Vercel, Netlify, Railway, Render
 - Risk assessment specific to each platform
-
-</td>
-<td width="50%">
 
 ### 🛡️ Security Audit
 - **7 security headers** check (HSTS, CSP, X-Frame-Options...)
@@ -85,20 +69,12 @@ misconfigurations, and vulnerabilities — then tells you exactly how to exploit
 - **Form** CSRF token detection
 - **JS patterns:** `eval()`, `innerHTML`, XSS sinks, API endpoints
 
-</td>
-</tr>
-<tr>
-<td width="50%">
-
 ### 🌐 Intelligence Gathering
 - DNS records (A, AAAA, MX, NS, TXT)
 - WHOIS data (registrar, creation date, org)
 - IP resolution
 - Technology stack fingerprinting (30+ techs)
 - HTTP header analysis & info leak detection
-
-</td>
-<td width="50%">
 
 ### 💀 Actionable Exploits
 Every finding includes:
@@ -108,20 +84,12 @@ Every finding includes:
 - **Severity grading** from CRITICAL to INFO
 - **Final security grade** (A+ to F)
 
-</td>
-<td width="50%">
+### 🤖 AI Penetration Tester
 
-### 🤖 AI Penetration Tester (Bonus)
 - **OpenRouter AI integration** — After the scan, AI generates detailed exploitation steps
 - Custom prompt system specialized in pentesting and red team tactics
 - Real attack commands, payloads, escalation paths
-- Works with any OpenRouter-compatible model (DeepSeek, GPT, Claude...)
-
-</td>
-</tr>
-</table>
-
-<br>
+- Works with any OpenRouter model (DeepSeek, GPT, Claude...)
 
 ## 🚀 Quick Start
 
