@@ -703,7 +703,79 @@ class SecurityScanner:
         for p in err_patterns:
             if re.search(p, self.page_text):
                 leaks.append({"type": "Error/Debug Info Exposed", "content": re.search(p, self.page_text).group(0), "severity": "HIGH"})
+
+        # --- Framework runtime config exposure (Nuxt, Next.js, etc.) ---
+        leaks += self._scan_framework_config_exposure()
+
         return {"info_leaks": leaks}
+
+    def _scan_framework_config_exposure(self):
+        """Detect exposed framework runtime configs: __NUXT__, __NEXT_DATA__, __NUXT_DATA__, etc."""
+        leaks = []
+
+        # Patterns to find framework config objects embedded in HTML
+        framework_patterns = [
+            ("Nuxt.js Runtime Config",  r'window\.__NUXT__\s*=\s*(\{.{20,}?\})',          re.DOTALL),
+            ("Nuxt.js SSR Data",        r'<script[^>]+id=["\']__NUXT_DATA__["\'][^>]*>([\s\S]{20,}?)</script>', re.IGNORECASE | re.DOTALL),
+            ("Next.js Build Data",      r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>([\s\S]{20,}?)</script>', re.IGNORECASE | re.DOTALL),
+        ]
+
+        # Sensitive keys to extract from the config blobs
+        sensitive_keys = [
+            ("baseUrl", "MEDIUM"),
+            ("serverBaseUrl", "MEDIUM"),
+            ("newBaseURL", "MEDIUM"),
+            ("buildId", "INFO"),
+            ("NODE_ENV", "INFO"),
+            ("STRIPE_PMC_KEY_LIVE", "HIGH"),
+            ("STRIPE_PMC_KEY_TEST", "MEDIUM"),
+            ("STRIPE_BNPL_CONFIGURATION_LIVE", "HIGH"),
+            ("STRIPE_DEFAULT_CONFIGURATION_LIVE", "HIGH"),
+            ("ENTERPRISE_RECAPTCHA_SITE_KEY", "MEDIUM"),
+            ("RECAPTCHA_SITE_KEY", "MEDIUM"),
+            ("HLS_URL", "LOW"),
+            ("REST_API_URLS", "MEDIUM"),
+            ("STATS_API_URL", "MEDIUM"),
+            ("paymentsServiceUrl", "MEDIUM"),
+            ("cdnURL", "INFO"),
+        ]
+
+        for label, pattern, flags in framework_patterns:
+            m = re.search(pattern, self.page_text, flags)
+            if not m:
+                continue
+
+            blob = m.group(1)[:5000]  # Limit to first 5000 chars to avoid huge dumps
+            summary_parts = []
+
+            for key, sev in sensitive_keys:
+                # Match  "key":"value"  or  key:"value"  or  "key":"value"
+                val_m = re.search(rf'["\']?{re.escape(key)}["\']?\s*:\s*["\']([^"\'{{}}]+)["\']', blob)
+                if val_m:
+                    val = val_m.group(1).strip()
+                    summary_parts.append(f"{key}={val}")
+
+            if summary_parts:
+                # Report each HIGH/CRITICAL key individually
+                for key, sev in sensitive_keys:
+                    val_m = re.search(rf'["\']?{re.escape(key)}["\']?\s*:\s*["\']([^"\'{{}}]+)["\']', blob)
+                    if val_m and sev in ("HIGH", "CRITICAL"):
+                        val = val_m.group(1).strip()
+                        leaks.append({
+                            "type": f"Framework Config Leak — {label}",
+                            "content": f"{key}: {val}",
+                            "severity": sev
+                        })
+
+                # Also report a summary entry with all found keys
+                leaks.append({
+                    "type": f"Framework Config Exposed — {label}",
+                    "content": ("Runtime config object injected in HTML exposes: "
+                                + " | ".join(summary_parts[:10])),
+                    "severity": "MEDIUM"
+                })
+
+        return leaks
 
     def scan_js_deep(self):
         if not self.js_contents:
